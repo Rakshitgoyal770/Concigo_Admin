@@ -17,9 +17,9 @@ class CreateEarlyCheckinDialog extends ConsumerStatefulWidget {
 }
 
 class _CreateEarlyCheckinDialogState extends ConsumerState<CreateEarlyCheckinDialog> {
-  final _nameController = TextEditingController(text: 'Early Bird Check-In Pass');
-  final _priceController = TextEditingController(text: '350');
-  final _limitController = TextEditingController(text: '5');
+  String? _selectedCategory; // null means 'All Categories'
+  final _priceController = TextEditingController(text: '500');
+  final _limitController = TextEditingController(text: '10');
 
   DateTime _minTime = DateTime.now().copyWith(hour: 8, minute: 0, second: 0);
   bool _isSubmitting = false;
@@ -27,7 +27,6 @@ class _CreateEarlyCheckinDialogState extends ConsumerState<CreateEarlyCheckinDia
 
   @override
   void dispose() {
-    _nameController.dispose();
     _priceController.dispose();
     _limitController.dispose();
     super.dispose();
@@ -76,16 +75,15 @@ class _CreateEarlyCheckinDialogState extends ConsumerState<CreateEarlyCheckinDia
     });
   }
 
-  Future<void> _submit() async {
-    final name = _nameController.text.trim();
+  Future<void> _submit(List<String> distinctCategories) async {
     final priceStr = _priceController.text.trim();
     final limitStr = _limitController.text.trim();
 
     final price = double.tryParse(priceStr);
     final limit = int.tryParse(limitStr);
 
-    if (name.isEmpty || price == null || price <= 0 || limit == null || limit <= 0) {
-      setState(() => _errorMessage = 'Please provide valid offer name, hourly price, and guest limit.');
+    if (price == null || price <= 0) {
+      setState(() => _errorMessage = 'Please provide a valid hourly price (e.g. ₹500).');
       return;
     }
 
@@ -96,23 +94,39 @@ class _CreateEarlyCheckinDialogState extends ConsumerState<CreateEarlyCheckinDia
 
     try {
       final propId = await ref.read(resolvedPropertyIdProvider.future);
-      await SupabaseService.instance.createEarlyLateOffer(
-        propertyId: propId,
-        offerName: name,
-        minTime: _minTime,
-        type: 'early_in',
-        pricePerHour: price,
-        limit: limit,
-      );
 
-      ref.read(receptionRefreshSignalProvider.notifier).state++;
+      final targetCategories = _selectedCategory != null && _selectedCategory!.isNotEmpty
+          ? [_selectedCategory!]
+          : distinctCategories;
+
+      if (targetCategories.isEmpty) {
+        throw Exception('No room categories found for this property.');
+      }
+
+      for (final cat in targetCategories) {
+        await SupabaseService.instance.upsertCategoryEarlyLateOffer(
+          propertyId: propId,
+          type: 'early_in',
+          category: cat,
+          price: price,
+          isActive: true,
+          minTime: _minTime,
+          limit: limit,
+        );
+      }
+
+      ref.invalidate(earlyCheckinOffersProvider);
 
       if (mounted) {
         Navigator.of(context).pop(true);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: AppColors.success,
-            content: Text('Early Check-In Offer "$name" published at ₹${price.toStringAsFixed(0)}/hr (Limit: $limit)!'),
+            content: Text(
+              _selectedCategory != null
+                  ? 'Early Check-In pass for "$_selectedCategory" saved at ₹${price.toStringAsFixed(0)}/hr!'
+                  : 'Early Check-In pass configured for all ${targetCategories.length} categories at ₹${price.toStringAsFixed(0)}/hr!',
+            ),
           ),
         );
       }
@@ -125,6 +139,13 @@ class _CreateEarlyCheckinDialogState extends ConsumerState<CreateEarlyCheckinDia
 
   @override
   Widget build(BuildContext context) {
+    final roomsAsync = ref.watch(receptionRoomsProvider);
+    final rooms = roomsAsync.valueOrNull ?? [];
+    final distinctCategories = rooms
+        .map((r) => (r['type'] ?? r['room_type'] ?? r['category'] ?? 'Standard').toString())
+        .toSet()
+        .toList();
+
     return Dialog(
       backgroundColor: AppColors.surface,
       shape: RoundedRectangleBorder(
@@ -159,8 +180,8 @@ class _CreateEarlyCheckinDialogState extends ConsumerState<CreateEarlyCheckinDia
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('Create Early Check-In Offer', style: AppTypography.titleMedium.copyWith(fontSize: isMobile ? 16 : 18)),
-                            Text('Offer arriving guests early room access for an hourly rate', style: AppTypography.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis),
+                            Text('Configure Early Check-In Offer', style: AppTypography.titleMedium.copyWith(fontSize: isMobile ? 16 : 18)),
+                            Text('Enable early arrival pass and set pricing per room type', style: AppTypography.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis),
                           ],
                         ),
                       ),
@@ -170,89 +191,119 @@ class _CreateEarlyCheckinDialogState extends ConsumerState<CreateEarlyCheckinDia
                       ),
                     ],
                   ),
-            AppSpacing.gapV20,
+                  AppSpacing.gapV20,
 
-            if (_errorMessage != null)
-              Container(
-                margin: const EdgeInsets.only(bottom: AppSpacing.md),
-                padding: const EdgeInsets.all(AppSpacing.md),
-                decoration: BoxDecoration(
-                  color: AppColors.departureLight,
-                  borderRadius: AppSpacing.roundedMd,
-                  border: Border.all(color: AppColors.departure),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error_outline, color: AppColors.departure, size: 18),
-                    AppSpacing.gapH8,
-                    Expanded(
-                      child: Text(_errorMessage!, style: AppTypography.bodySmall.copyWith(color: AppColors.departure)),
+                  if (_errorMessage != null)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: AppSpacing.md),
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: AppColors.departureLight,
+                        borderRadius: AppSpacing.roundedMd,
+                        border: Border.all(color: AppColors.departure),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline, color: AppColors.departure, size: 18),
+                          AppSpacing.gapH8,
+                          Expanded(
+                            child: Text(_errorMessage!, style: AppTypography.bodySmall.copyWith(color: AppColors.departure)),
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
-                ),
-              ),
 
-            LuxuryTextField(
-              label: 'Offer Title',
-              hintText: 'e.g. Early Bird Check-In Access',
-              controller: _nameController,
-            ),
-            AppSpacing.gapV16,
-
-            Row(
-              children: [
-                Expanded(
-                  child: LuxuryTextField(
-                    label: 'Price Per Hour (₹)',
-                    hintText: '350',
-                    keyboardType: TextInputType.number,
-                    controller: _priceController,
+                  // Room Category Dropdown
+                  Text('Target Room Category', style: AppTypography.labelMedium),
+                  AppSpacing.gapV8,
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceSubtle,
+                      borderRadius: AppSpacing.roundedMd,
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String?>(
+                        value: _selectedCategory,
+                        isExpanded: true,
+                        icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('🌟 All Room Categories', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ),
+                          ...distinctCategories.map(
+                            (cat) => DropdownMenuItem<String?>(
+                              value: cat,
+                              child: Text(cat),
+                            ),
+                          ),
+                        ],
+                        onChanged: (val) {
+                          setState(() {
+                            _selectedCategory = val;
+                          });
+                        },
+                      ),
+                    ),
                   ),
-                ),
-                AppSpacing.gapH16,
-                Expanded(
-                  child: LuxuryTextField(
-                    label: 'Guest Limit (Rooms)',
-                    hintText: '5',
-                    keyboardType: TextInputType.number,
-                    controller: _limitController,
-                  ),
-                ),
-              ],
-            ),
-            AppSpacing.gapV16,
+                  AppSpacing.gapV16,
 
-            Text('Earliest Allowed Arrival Time', style: AppTypography.labelMedium),
-            AppSpacing.gapV8,
-            InkWell(
-              onTap: _pickMinTime,
-              borderRadius: AppSpacing.roundedMd,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceSubtle,
-                  borderRadius: AppSpacing.roundedMd,
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.access_time_rounded, size: 18, color: AppColors.info),
-                        AppSpacing.gapH12,
-                        Text(
-                          DateFormat('EEE, dd MMM yyyy · hh:mm a').format(_minTime),
-                          style: AppTypography.labelLarge,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: LuxuryTextField(
+                          label: 'Hourly Rate (₹ / room)',
+                          hintText: '500',
+                          keyboardType: TextInputType.number,
+                          controller: _priceController,
                         ),
-                      ],
+                      ),
+                      AppSpacing.gapH16,
+                      Expanded(
+                        child: LuxuryTextField(
+                          label: 'Daily Room Quota',
+                          hintText: '10',
+                          keyboardType: TextInputType.number,
+                          controller: _limitController,
+                        ),
+                      ),
+                    ],
+                  ),
+                  AppSpacing.gapV16,
+
+                  Text('Earliest Allowed Arrival Time', style: AppTypography.labelMedium),
+                  AppSpacing.gapV8,
+                  InkWell(
+                    onTap: _pickMinTime,
+                    borderRadius: AppSpacing.roundedMd,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceSubtle,
+                        borderRadius: AppSpacing.roundedMd,
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.access_time_rounded, size: 18, color: AppColors.info),
+                              AppSpacing.gapH12,
+                              Text(
+                                DateFormat('EEE, dd MMM yyyy · hh:mm a').format(_minTime),
+                                style: AppTypography.labelLarge,
+                              ),
+                            ],
+                          ),
+                          const Icon(Icons.calendar_month_outlined, size: 18, color: AppColors.textMuted),
+                        ],
+                      ),
                     ),
-                    const Icon(Icons.calendar_month_outlined, size: 18, color: AppColors.textMuted),
-                  ],
-                ),
-              ),
-            ),
-            AppSpacing.gapV24,
+                  ),
+                  AppSpacing.gapV24,
 
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
@@ -264,11 +315,11 @@ class _CreateEarlyCheckinDialogState extends ConsumerState<CreateEarlyCheckinDia
                       ),
                       AppSpacing.gapH12,
                       LuxuryButton(
-                        text: 'Publish Early Offer',
+                        text: 'Save & Enable Offer',
                         variant: LuxuryButtonVariant.primary,
                         icon: Icons.check_circle_outline,
                         isLoading: _isSubmitting,
-                        onPressed: _submit,
+                        onPressed: () => _submit(distinctCategories),
                       ),
                     ],
                   ),

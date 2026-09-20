@@ -35,13 +35,23 @@ class StayService {
 
       final stayRooms = map['stay_rooms'] as List?;
       if (stayRooms != null && stayRooms.isNotEmpty) {
+        final roomNumbers = stayRooms
+            .map((sr) {
+              final roomMap = (sr as Map<String, dynamic>)['rooms'] as Map<String, dynamic>?;
+              return roomMap?['room_number']?.toString();
+            })
+            .where((n) => n != null && n.isNotEmpty)
+            .cast<String>()
+            .toList();
+
         final sr = stayRooms.first as Map<String, dynamic>;
         map['room_id'] = sr['room_id'] as String?;
-        final roomMap = sr['rooms'] as Map<String, dynamic>?;
-        map['room_number'] = roomMap?['room_number'] as String? ?? 'N/A';
+        map['room_number'] = roomNumbers.isNotEmpty ? roomNumbers.join(', ') : 'N/A';
+        map['room_numbers'] = roomNumbers;
       } else {
         map['room_id'] = null;
         map['room_number'] = 'N/A';
+        map['room_numbers'] = <String>[];
       }
       results.add(map);
     }
@@ -80,7 +90,7 @@ class StayService {
     );
   }
 
-  /// Create upcoming scheduled reservation
+  /// Create upcoming scheduled reservation with single or multiple rooms
   Future<String> createUpcomingStay({
     required String propertyId,
     required String mobileNo,
@@ -88,15 +98,30 @@ class StayService {
     required DateTime checkInDate,
     required DateTime checkOutDate,
     String? roomId,
+    List<String>? roomIds,
   }) async {
-    if (roomId != null && roomId.isNotEmpty && roomId != 'null' && roomId != 'N/A') {
+    // Collect all unique room IDs to assign
+    final List<String> targetRoomIds = [];
+    if (roomIds != null && roomIds.isNotEmpty) {
+      targetRoomIds.addAll(
+        roomIds.where((r) => r.isNotEmpty && r != 'null' && r != 'N/A'),
+      );
+    } else if (roomId != null &&
+        roomId.isNotEmpty &&
+        roomId != 'null' &&
+        roomId != 'N/A') {
+      targetRoomIds.add(roomId);
+    }
+
+    // Validate availability for each selected room
+    for (final rid in targetRoomIds) {
       final isAvail = await checkRoomAvailable(
-        roomId: roomId,
+        roomId: rid,
         checkInDate: checkInDate,
         checkOutDate: checkOutDate,
       );
       if (!isAvail) {
-        throw Exception('Selected room is already booked for these dates.');
+        throw Exception('Room ID $rid is already booked for these dates.');
       }
     }
 
@@ -108,11 +133,11 @@ class StayService {
       checkOutDate: checkOutDate,
     );
 
-    if (roomId != null && roomId.isNotEmpty && roomId != 'null' && roomId != 'N/A') {
-      await _supabaseService.client.from('stay_rooms').insert({
-        'stay_id': stayId,
-        'room_id': roomId,
-      });
+    final uniqueRoomIds = targetRoomIds.toSet().toList();
+    if (uniqueRoomIds.isNotEmpty) {
+      await _supabaseService.client.from('stay_rooms').insert(
+        uniqueRoomIds.map((rid) => {'stay_id': stayId, 'room_id': rid}).toList(),
+      );
     }
 
     return stayId;

@@ -51,35 +51,49 @@ class RoomUpgradesTab extends ConsumerWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryLight,
-                          borderRadius: AppSpacing.roundedSm,
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryLight,
+                            borderRadius: AppSpacing.roundedSm,
+                          ),
+                          child: Text('Room $roomNum', style: AppTypography.monoRoom.copyWith(fontSize: 13)),
                         ),
-                        child: Text('Room $roomNum', style: AppTypography.monoRoom.copyWith(fontSize: 13)),
-                      ),
-                      AppSpacing.gapH12,
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Upgrade to $targetCategory', style: AppTypography.labelLarge),
-                          Text('Upgrade Differential: ₹$diffPrice / night', style: AppTypography.bodySmall),
-                        ],
-                      ),
-                    ],
+                        AppSpacing.gapH12,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Upgrade to $targetCategory',
+                                style: AppTypography.labelLarge,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                'Upgrade Differential: ₹$diffPrice / night',
+                                style: AppTypography.bodySmall,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+                  const SizedBox(width: 8),
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       LuxuryBadge(
                         label: status.toUpperCase(),
                         variant: status == 'approved' ? LuxuryBadgeVariant.success : LuxuryBadgeVariant.attention,
                         isSmall: true,
                       ),
-                      AppSpacing.gapH12,
-                      if (status == 'pending' || status == 'requested')
+                      if (status == 'pending' || status == 'requested') ...[
+                        AppSpacing.gapH8,
                         LuxuryButton(
                           text: 'Approve & Charge',
                           variant: LuxuryButtonVariant.success,
@@ -92,6 +106,7 @@ class RoomUpgradesTab extends ConsumerWidget {
                             ref.read(receptionRefreshSignalProvider.notifier).state++;
                           },
                         ),
+                      ],
                     ],
                   ),
                 ],

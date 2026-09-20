@@ -34,17 +34,6 @@ class _UpsellsOffersViewState extends ConsumerState<UpsellsOffersView> with Sing
     super.dispose();
   }
 
-  void _openCreateDialog() {
-    final idx = _tabController.index;
-    if (idx == 1) {
-      showDialog(context: context, builder: (_) => const CreateEarlyCheckinDialog());
-    } else if (idx == 2) {
-      showDialog(context: context, builder: (_) => const CreateLateCheckoutDialog());
-    } else {
-      showDialog(context: context, builder: (_) => const CreateOfferDialog());
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(

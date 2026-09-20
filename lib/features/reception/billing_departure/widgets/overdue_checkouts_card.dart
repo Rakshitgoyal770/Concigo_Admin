@@ -11,21 +11,68 @@ import '../../../../data/providers/reception_providers.dart';
 import '../../../../data/providers/supabase_providers.dart';
 import 'instant_checkout_modal.dart';
 
-bool isStayTimedOut(Map<String, dynamic> stay) {
-  final outStr = stay['check_out_date']?.toString().split('T')[0];
-  if (outStr == null || outStr.isEmpty) return false;
-  final outDate = DateTime.tryParse(outStr);
-  if (outDate == null) return false;
+/// Calculates the exact departure DateTime taking into account:
+/// 1. early_late_offer_accepts (redeemed Late Checkout Pass, e.g. '16:00:00' / 04:00 PM)
+/// 2. stay.check_out_time (e.g. '14:00:00' from a late pass)
+/// 3. hotel_property.checkout_time (e.g. '12:00:00' or '11:00:00')
+/// 4. ISO timestamp inside check_out_date
+DateTime? getStayDepartureDateTime(Map<String, dynamic> stay) {
+  final outStr = stay['check_out_date']?.toString();
+  if (outStr == null || outStr.isEmpty) return null;
 
-  final now = DateTime.now();
-  final today = DateTime(now.year, now.month, now.day);
-  final outDay = DateTime(outDate.year, outDate.month, outDate.day);
+  final datePart = outStr.split('T')[0];
+  final date = DateTime.tryParse(datePart);
+  if (date == null) return null;
 
-  if (today.isAfter(outDay)) return true;
-  if (today.isAtSameMomentAs(outDay)) {
-    return now.hour >= 11;
+  // 1. Check if there is an accepted late_out pass in early_late_offer_accepts
+  final accepts = stay['early_late_offer_accepts'] as List?;
+  if (accepts != null && accepts.isNotEmpty) {
+    final latePasses = accepts.where((a) {
+      final m = a as Map<String, dynamic>?;
+      return m?['type'] == 'late_out' && m?['time_selected'] != null;
+    }).toList();
+
+    if (latePasses.isNotEmpty) {
+      final lastLate = latePasses.last as Map<String, dynamic>;
+      final timeSelected = lastLate['time_selected']?.toString();
+      if (timeSelected != null && timeSelected.isNotEmpty) {
+        final parsedTime = DateTime.tryParse(timeSelected);
+        if (parsedTime != null) {
+          return DateTime(date.year, date.month, date.day, parsedTime.hour, parsedTime.minute);
+        }
+      }
+    }
   }
-  return false;
+
+  // 2. If check_out_date contains full time component
+  if (outStr.contains('T') && !outStr.endsWith('T00:00:00.000') && !outStr.endsWith('T00:00:00')) {
+    final parsed = DateTime.tryParse(outStr);
+    if (parsed != null && (parsed.hour != 0 || parsed.minute != 0)) {
+      return parsed;
+    }
+  }
+
+  // 3. Fallback to stay.check_out_time or hotel default checkout_time
+  final timeStr = stay['check_out_time']?.toString() ??
+      stay['hotel_property']?['checkout_time']?.toString() ??
+      stay['hotel']?['checkout_time']?.toString() ??
+      '11:00:00';
+
+  int hour = 11;
+  int minute = 0;
+  try {
+    final parts = timeStr.split(':');
+    if (parts.isNotEmpty) hour = int.tryParse(parts[0]) ?? 11;
+    if (parts.length > 1) minute = int.tryParse(parts[1]) ?? 0;
+  } catch (_) {}
+
+  return DateTime(date.year, date.month, date.day, hour, minute);
+}
+
+bool isStayTimedOut(Map<String, dynamic> stay) {
+  final departureMoment = getStayDepartureDateTime(stay);
+  if (departureMoment == null) return false;
+  return DateTime.now().isAfter(departureMoment);
 }
 
 class OverdueCheckoutsCard extends ConsumerWidget {
@@ -181,6 +228,7 @@ class OverdueCheckoutsCard extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
                     width: 34,
@@ -200,7 +248,10 @@ class OverdueCheckoutsCard extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             Text(
                               'Overdue Checkouts (Timed-Out Guests)',
@@ -209,7 +260,6 @@ class OverdueCheckoutsCard extends ConsumerWidget {
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            AppSpacing.gapH8,
                             LuxuryBadge(
                               label: '$count OVERDUE',
                               variant: LuxuryBadgeVariant.departure,
@@ -217,8 +267,9 @@ class OverdueCheckoutsCard extends ConsumerWidget {
                             ),
                           ],
                         ),
+                        const SizedBox(height: 2),
                         Text(
-                          'Guests past the 11:00 AM standard checkout without approved extension. Room services paused on guest app.',
+                          'Guests past standard checkout without approved extension. Room services paused on guest app.',
                           style: AppTypography.bodySmall.copyWith(color: const Color(0xFFB45309)),
                         ),
                       ],
@@ -227,102 +278,154 @@ class OverdueCheckoutsCard extends ConsumerWidget {
                 ],
               ),
               AppSpacing.gapV16,
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: overdueStays.length,
-                separatorBuilder: (_, __) => const Divider(height: 16),
-                itemBuilder: (context, index) {
-                  final stay = overdueStays[index];
-                  final guestName = (stay['guest_name'] ?? stay['user_name'] ?? 'Guest').toString();
-                  final phone = (stay['phone_number'] ?? stay['phone'] ?? '').toString();
-                  final roomNum = (stay['room_number'] ?? stay['room_no'] ?? 'N/A').toString();
-                  final outStr = stay['check_out_date']?.toString().split('T')[0] ?? '';
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final isCompact = constraints.maxWidth < 620;
 
-                  return Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFFBEB),
-                      borderRadius: AppSpacing.roundedMd,
-                      border: Border.all(color: const Color(0xFFFDE68A)),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFEF3C7),
-                            borderRadius: AppSpacing.roundedSm,
-                            border: Border.all(color: const Color(0xFFF59E0B)),
-                          ),
-                          child: Text(
-                            'Room $roomNum',
-                            style: AppTypography.monoRoom.copyWith(
-                              fontSize: 13,
-                              color: const Color(0xFF92400E),
-                              fontWeight: FontWeight.bold,
-                            ),
+                  return ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: overdueStays.length,
+                    separatorBuilder: (_, __) => const Divider(height: 16),
+                    itemBuilder: (context, index) {
+                      final stay = overdueStays[index];
+                      final guestName = (stay['guest_name'] ?? stay['user_name'] ?? 'Guest').toString();
+                      final phone = (stay['phone_number'] ?? stay['phone'] ?? '').toString();
+                      final roomNum = (stay['room_number'] ?? stay['room_no'] ?? 'N/A').toString();
+                      final outStr = stay['check_out_date']?.toString().split('T')[0] ?? '';
+
+                      final departureMoment = getStayDepartureDateTime(stay);
+                      String timeLabel = '11:00 AM';
+                      if (departureMoment != null) {
+                        final h = departureMoment.hour % 12 == 0 ? 12 : departureMoment.hour % 12;
+                        final m = departureMoment.minute.toString().padLeft(2, '0');
+                        final p = departureMoment.hour >= 12 ? 'PM' : 'AM';
+                        timeLabel = '$h:$m $p';
+                      }
+
+                      final roomBadge = Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF3C7),
+                          borderRadius: AppSpacing.roundedSm,
+                          border: Border.all(color: const Color(0xFFF59E0B)),
+                        ),
+                        child: Text(
+                          'Room $roomNum',
+                          style: AppTypography.monoRoom.copyWith(
+                            fontSize: 13,
+                            color: const Color(0xFF92400E),
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                        AppSpacing.gapH12,
-                        Expanded(
+                      );
+
+                      final guestInfo = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            guestName,
+                            style: AppTypography.labelLarge.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '$phone • Due: $outStr ($timeLabel)',
+                            style: AppTypography.bodySmall.copyWith(
+                              color: const Color(0xFFB45309),
+                            ),
+                          ),
+                        ],
+                      );
+
+                      final actionButtons = Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          LuxuryButton(
+                            text: 'Contact',
+                            variant: LuxuryButtonVariant.outline,
+                            height: 32,
+                            icon: Icons.phone_outlined,
+                            onPressed: () {
+                              if (phone.isNotEmpty) {
+                                Clipboard.setData(ClipboardData(text: phone));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Phone $phone copied to clipboard'),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                          LuxuryButton(
+                            text: 'Extend',
+                            variant: LuxuryButtonVariant.outline,
+                            height: 32,
+                            icon: Icons.more_time_rounded,
+                            onPressed: () => _showExtendDialog(context, ref, stay),
+                          ),
+                          LuxuryButton(
+                            text: 'Checkout',
+                            variant: LuxuryButtonVariant.danger,
+                            height: 32,
+                            icon: Icons.logout_rounded,
+                            onPressed: () {
+                              showDialog(
+                                context: context,
+                                builder: (_) => InstantCheckoutModal(stay: stay),
+                              );
+                            },
+                          ),
+                        ],
+                      );
+
+                      if (isCompact) {
+                        return Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBEB),
+                            borderRadius: AppSpacing.roundedMd,
+                            border: Border.all(color: const Color(0xFFFDE68A)),
+                          ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(guestName, style: AppTypography.labelLarge),
-                              Text(
-                                '$phone • Due: $outStr (11:00 AM)',
-                                style: AppTypography.bodySmall.copyWith(
-                                  color: const Color(0xFFB45309),
-                                ),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  roomBadge,
+                                  AppSpacing.gapH12,
+                                  Expanded(child: guestInfo),
+                                ],
                               ),
+                              const SizedBox(height: 12),
+                              const Divider(height: 1, thickness: 0.8, color: Color(0xFFFDE68A)),
+                              const SizedBox(height: 10),
+                              actionButtons,
                             ],
                           ),
+                        );
+                      }
+
+                      return Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: AppSpacing.roundedMd,
+                          border: Border.all(color: const Color(0xFFFDE68A)),
                         ),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 6,
+                        child: Row(
                           children: [
-                            LuxuryButton(
-                              text: 'Contact',
-                              variant: LuxuryButtonVariant.outline,
-                              height: 30,
-                              icon: Icons.phone_outlined,
-                              onPressed: () {
-                                if (phone.isNotEmpty) {
-                                  Clipboard.setData(ClipboardData(text: phone));
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Phone $phone copied to clipboard'),
-                                      duration: const Duration(seconds: 2),
-                                    ),
-                                  );
-                                }
-                              },
-                            ),
-                            LuxuryButton(
-                              text: 'Extend',
-                              variant: LuxuryButtonVariant.outline,
-                              height: 30,
-                              icon: Icons.more_time_rounded,
-                              onPressed: () => _showExtendDialog(context, ref, stay),
-                            ),
-                            LuxuryButton(
-                              text: 'Checkout',
-                              variant: LuxuryButtonVariant.danger,
-                              height: 30,
-                              icon: Icons.logout_rounded,
-                              onPressed: () {
-                                showDialog(
-                                  context: context,
-                                  builder: (_) => InstantCheckoutModal(stay: stay),
-                                );
-                              },
-                            ),
+                            roomBadge,
+                            AppSpacing.gapH12,
+                            Expanded(child: guestInfo),
+                            AppSpacing.gapH12,
+                            actionButtons,
                           ],
                         ),
-                      ],
-                    ),
+                      );
+                    },
                   );
                 },
               ),

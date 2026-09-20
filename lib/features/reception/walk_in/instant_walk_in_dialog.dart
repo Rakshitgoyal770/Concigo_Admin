@@ -27,23 +27,34 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
   final _emailController = TextEditingController();
   final _tariffController = TextEditingController();
 
-  Map<String, dynamic>? _selectedRoom;
-  DateTime _checkInDate = DateTime.now();
-  DateTime _checkOutDate = DateTime.now().add(const Duration(days: 1));
+  final List<Map<String, dynamic>> _selectedRooms = [];
+  final DateTime _checkInDate = DateTime.now();
+  final DateTime _checkOutDate = DateTime.now().add(const Duration(days: 1));
   bool _isSearchingPhone = false;
   bool _isSubmitting = false;
   bool _physicalIdVerified = true;
-  String? _guestId;
   String? _errorMessage;
+
+  String _roomSearchQuery = '';
+  String _selectedCategory = 'All';
+  String _selectedFloor = 'All Floors';
 
   @override
   void initState() {
     super.initState();
-    _selectedRoom = widget.initialRoom;
-    if (_selectedRoom != null) {
-      final basePrice = _selectedRoom?['base_price'] ?? _selectedRoom?['price_per_night'] ?? 2500;
-      _tariffController.text = basePrice.toString();
+    if (widget.initialRoom != null) {
+      _selectedRooms.add(widget.initialRoom!);
+      _recalculateTariff();
     }
+  }
+
+  void _recalculateTariff() {
+    double total = 0;
+    for (final r in _selectedRooms) {
+      final base = r['base_price'] ?? r['price_per_night'] ?? 2500;
+      total += (double.tryParse(base.toString()) ?? 2500.0);
+    }
+    _tariffController.text = total > 0 ? total.toStringAsFixed(0) : '2500';
   }
 
   @override
@@ -69,7 +80,6 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
       final guest = await ref.read(guestServiceProvider).searchUserByPhone(cleanPhone);
       if (guest != null && mounted) {
         setState(() {
-          _guestId = guest['user_id'] ?? guest['id'];
           _firstNameController.text = guest['first_name'] ?? guest['f_name'] ?? '';
           _lastNameController.text = guest['last_name'] ?? guest['l_name'] ?? '';
           _emailController.text = guest['email'] ?? '';
@@ -86,15 +96,14 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
     final phone = _phoneController.text.trim();
     final fName = _firstNameController.text.trim();
     final lName = _lastNameController.text.trim();
-    final tariff = double.tryParse(_tariffController.text.trim()) ?? 2500.0;
 
     if (phone.isEmpty || fName.isEmpty) {
       setState(() => _errorMessage = 'Please provide guest phone number and name.');
       return;
     }
 
-    if (_selectedRoom == null) {
-      setState(() => _errorMessage = 'Please select an available room.');
+    if (_selectedRooms.isEmpty) {
+      setState(() => _errorMessage = 'Please select at least one available room.');
       return;
     }
 
@@ -112,40 +121,48 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
       // 1. Get or create user
       await guestService.getOrCreateUser(phone);
 
-      final roomId = (_selectedRoom!['room_id'] ?? _selectedRoom!['id']).toString();
-      final roomNumber = (_selectedRoom!['room_number'] ?? _selectedRoom!['room_no']).toString();
+      final roomIds = _selectedRooms
+          .map((r) => (r['room_id'] ?? r['id']).toString())
+          .toList();
+      final roomNumbers = _selectedRooms
+          .map((r) => (r['room_number'] ?? r['room_no']).toString())
+          .toList();
 
-      // Check if room is available
-      final isAvail = await stayService.checkRoomAvailable(
-        roomId: roomId,
-        checkInDate: _checkInDate,
-        checkOutDate: _checkOutDate,
-      );
-      if (!isAvail) {
-        setState(() => _errorMessage = 'Room $roomNumber is already booked or occupied.');
-        return;
+      // Check if all rooms are available
+      for (final r in _selectedRooms) {
+        final rid = (r['room_id'] ?? r['id']).toString();
+        final rnum = (r['room_number'] ?? r['room_no']).toString();
+        final isAvail = await stayService.checkRoomAvailable(
+          roomId: rid,
+          checkInDate: _checkInDate,
+          checkOutDate: _checkOutDate,
+        );
+        if (!isAvail) {
+          setState(() => _errorMessage = 'Room $rnum is already booked or occupied.');
+          return;
+        }
       }
 
-      // 2. Create Stay record
+      // 2. Create Stay record with all room IDs
       final stayId = await stayService.createStay(
         propertyId: propId,
         guestMobiles: [phone],
-        roomIds: [roomId],
+        roomIds: roomIds,
         checkInDate: _checkInDate,
         checkOutDate: _checkOutDate,
       );
 
-      // 3. Activate stay immediately
-      await stayService.activateStay(
-        stayId: stayId,
-        roomId: roomId,
-        assignRoom: true,
-      );
+      // 3. Activate stay and mark each room occupied
+      for (final rid in roomIds) {
+        await stayService.activateStay(
+          stayId: stayId,
+          roomId: rid,
+          assignRoom: true,
+        );
+        await roomService.updateRoomStatus(rid, 'occupied');
+      }
 
-      // 4. Mark Room Occupied
-      await roomService.updateRoomStatus(roomId, 'occupied');
-
-      // 5. Invalidate Reception Providers
+      // 4. Invalidate Reception Providers
       ref.read(receptionRefreshSignalProvider.notifier).state++;
 
       if (mounted) {
@@ -153,7 +170,9 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: AppColors.success,
-            content: Text('Walk-In Activated! Room $roomNumber assigned to $fName $lName.'),
+            content: Text(
+              'Walk-In Activated! ${roomNumbers.length > 1 ? "Rooms" : "Room"} ${roomNumbers.join(", ")} assigned to $fName $lName.',
+            ),
           ),
         );
       }
@@ -317,8 +336,6 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
                   AppSpacing.gapV16,
 
                   // Step 2: Room Allocation
-                  Text('2. Room & Tariff', style: AppTypography.labelLarge),
-                  AppSpacing.gapV12,
                   roomsAsync.when(
                     data: (rooms) {
                       final vacantRooms = rooms.where((r) {
@@ -327,33 +344,344 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
                         return !isBooked && (status != 'OCCUPIED' && status != 'MAINTENANCE');
                       }).toList();
 
-                      return DropdownButtonFormField<String>(
-                        value: _selectedRoom != null
-                            ? (_selectedRoom!['room_id'] ?? _selectedRoom!['id']).toString()
-                            : null,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Select Available Room',
-                          prefixIcon: Icon(Icons.meeting_room_outlined, size: 18),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        ),
-                        items: vacantRooms.map((r) {
-                          final rId = (r['room_id'] ?? r['id']).toString();
-                          final rNum = (r['room_number'] ?? r['room_no']).toString();
-                          final rType = (r['type'] ?? r['room_type'] ?? r['category'] ?? 'Standard').toString();
-                          return DropdownMenuItem(
-                            value: rId,
-                            child: Text('Room $rNum ($rType)', overflow: TextOverflow.ellipsis),
-                          );
-                        }).toList(),
-                        onChanged: (val) {
-                          final chosen = vacantRooms.firstWhere((r) => (r['room_id'] ?? r['id']).toString() == val);
-                          setState(() {
-                            _selectedRoom = chosen;
-                            final price = chosen['base_price'] ?? chosen['price_per_night'] ?? 2500;
-                            _tariffController.text = price.toString();
-                          });
-                        },
+                      String getCat(Map<String, dynamic> r) =>
+                          (r['type'] ?? r['room_type'] ?? r['category'] ?? 'Standard').toString();
+                      String getFloor(Map<String, dynamic> r) {
+                        if (r['floor'] != null && r['floor'].toString().isNotEmpty) {
+                          return 'Floor ${r['floor']}';
+                        }
+                        final numStr = (r['room_number'] ?? r['room_no'] ?? '').toString();
+                        final val = int.tryParse(numStr);
+                        if (val != null && val >= 100) return 'Floor ${val ~/ 100}';
+                        return 'Ground Floor';
+                      }
+
+                      final categories = ['All', ...vacantRooms.map(getCat).toSet()];
+                      final floors = ['All Floors', ...vacantRooms.map(getFloor).toSet()];
+
+                      final filteredRooms = vacantRooms.where((r) {
+                        final rNum = (r['room_number'] ?? r['room_no'] ?? '').toString().toLowerCase();
+                        final rCat = getCat(r).toLowerCase();
+                        final rFloor = getFloor(r).toLowerCase();
+                        final q = _roomSearchQuery.toLowerCase().trim();
+
+                        final matchQ = q.isEmpty || rNum.contains(q) || rCat.contains(q) || rFloor.contains(q);
+                        final matchCat = _selectedCategory == 'All' || getCat(r) == _selectedCategory;
+                        final matchFloor = _selectedFloor == 'All Floors' || getFloor(r) == _selectedFloor;
+
+                        return matchQ && matchCat && matchFloor;
+                      }).toList();
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.meeting_room_outlined, size: 16, color: AppColors.primary),
+                                  const SizedBox(width: 6),
+                                  Text('2. Room Allocation & Tariff', style: AppTypography.labelLarge),
+                                ],
+                              ),
+                              if (_selectedRooms.isNotEmpty)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primaryLight,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+                                  ),
+                                  child: Text(
+                                    '${_selectedRooms.length} selected',
+                                    style: AppTypography.labelSmall.copyWith(
+                                      color: AppColors.primary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Select one or multiple vacant rooms for this walk-in guest.',
+                            style: AppTypography.bodySmall.copyWith(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                          const SizedBox(height: 10),
+
+                          // Search & Quick Filter Controls
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceSubtle,
+                              borderRadius: AppSpacing.roundedMd,
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Room Search Box
+                                SizedBox(
+                                  height: 36,
+                                  child: TextField(
+                                    onChanged: (val) => setState(() => _roomSearchQuery = val),
+                                    style: AppTypography.bodySmall.copyWith(fontSize: 12),
+                                    decoration: InputDecoration(
+                                      hintText: 'Search room number (e.g. 101, 204, Deluxe)...',
+                                      hintStyle: AppTypography.bodySmall.copyWith(fontSize: 12, color: AppColors.textSecondary),
+                                      prefixIcon: const Icon(Icons.search, size: 16, color: AppColors.textSecondary),
+                                      suffixIcon: _roomSearchQuery.isNotEmpty
+                                          ? IconButton(
+                                              icon: const Icon(Icons.clear, size: 14),
+                                              onPressed: () => setState(() => _roomSearchQuery = ''),
+                                            )
+                                          : null,
+                                      filled: true,
+                                      fillColor: AppColors.surface,
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: const BorderSide(color: AppColors.border),
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: const BorderSide(color: AppColors.border),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (categories.length > 1) ...[
+                                  const SizedBox(height: 8),
+                                  // Category & Floor Filter Chips
+                                  SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: Row(
+                                      children: [
+                                        ...categories.map((cat) {
+                                          final isSel = _selectedCategory == cat;
+                                          final count = cat == 'All'
+                                              ? vacantRooms.length
+                                              : vacantRooms.where((r) => getCat(r) == cat).length;
+                                          return Padding(
+                                            padding: const EdgeInsets.only(right: 6),
+                                            child: ChoiceChip(
+                                              label: Text('$cat ($count)', style: TextStyle(fontSize: 11, fontWeight: isSel ? FontWeight.w700 : FontWeight.w500)),
+                                              selected: isSel,
+                                              selectedColor: AppColors.primaryLight,
+                                              backgroundColor: AppColors.surface,
+                                              labelStyle: TextStyle(color: isSel ? AppColors.primary : AppColors.textSecondary),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(6),
+                                                side: BorderSide(color: isSel ? AppColors.primary : AppColors.border),
+                                              ),
+                                              onSelected: (_) => setState(() => _selectedCategory = cat),
+                                              visualDensity: VisualDensity.compact,
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+                                            ),
+                                          );
+                                        }),
+                                        if (floors.length > 2) ...[
+                                          Container(width: 1, height: 18, color: AppColors.border, margin: const EdgeInsets.symmetric(horizontal: 6)),
+                                          ...floors.map((fl) {
+                                            final isSel = _selectedFloor == fl;
+                                            return Padding(
+                                              padding: const EdgeInsets.only(right: 6),
+                                              child: ChoiceChip(
+                                                label: Text(fl, style: TextStyle(fontSize: 11, fontWeight: isSel ? FontWeight.w700 : FontWeight.w500)),
+                                                selected: isSel,
+                                                selectedColor: AppColors.infoLight,
+                                                backgroundColor: AppColors.surface,
+                                                labelStyle: TextStyle(color: isSel ? AppColors.info : AppColors.textSecondary),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(6),
+                                                  side: BorderSide(color: isSel ? AppColors.info : AppColors.border),
+                                                ),
+                                                onSelected: (_) => setState(() => _selectedFloor = fl),
+                                                visualDensity: VisualDensity.compact,
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+                                              ),
+                                            );
+                                          }),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+
+                          // Smart Room Cards View
+                          Container(
+                            constraints: const BoxConstraints(maxHeight: 200),
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceSubtle,
+                              borderRadius: AppSpacing.roundedMd,
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: vacantRooms.isEmpty
+                                ? const Center(
+                                    child: Padding(
+                                      padding: EdgeInsets.all(16),
+                                      child: Text(
+                                        'No vacant rooms currently available.',
+                                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                                      ),
+                                    ),
+                                  )
+                                : filteredRooms.isEmpty
+                                    ? Center(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(16),
+                                          child: Text(
+                                            'No rooms match your filter or search.',
+                                            style: AppTypography.bodySmall.copyWith(fontSize: 12, color: AppColors.textSecondary),
+                                          ),
+                                        ),
+                                      )
+                                    : SingleChildScrollView(
+                                        child: Wrap(
+                                          spacing: 8,
+                                          runSpacing: 8,
+                                          children: filteredRooms.map((r) {
+                                            final rId = (r['room_id'] ?? r['id']).toString();
+                                            final rNum = (r['room_number'] ?? r['room_no']).toString();
+                                            final rType = getCat(r);
+                                            final rFloor = getFloor(r);
+                                            final price = r['base_price'] ?? r['price_per_night'] ?? 2500;
+                                            final isSelected = _selectedRooms.any(
+                                              (sr) => (sr['room_id'] ?? sr['id']).toString() == rId,
+                                            );
+
+                                            return InkWell(
+                                              onTap: () {
+                                                setState(() {
+                                                  if (!isSelected) {
+                                                    _selectedRooms.add(r);
+                                                  } else {
+                                                    _selectedRooms.removeWhere(
+                                                      (sr) => (sr['room_id'] ?? sr['id']).toString() == rId,
+                                                    );
+                                                  }
+                                                  _recalculateTariff();
+                                                });
+                                              },
+                                              borderRadius: BorderRadius.circular(10),
+                                              child: AnimatedContainer(
+                                                duration: const Duration(milliseconds: 150),
+                                                width: 110,
+                                                padding: const EdgeInsets.all(8),
+                                                decoration: BoxDecoration(
+                                                  color: isSelected ? AppColors.primaryLight : AppColors.surface,
+                                                  borderRadius: BorderRadius.circular(10),
+                                                  border: Border.all(
+                                                    color: isSelected ? AppColors.primary : AppColors.border,
+                                                    width: isSelected ? 1.5 : 1,
+                                                  ),
+                                                  boxShadow: isSelected
+                                                      ? [
+                                                          BoxShadow(
+                                                            color: AppColors.primary.withValues(alpha: 0.15),
+                                                            blurRadius: 4,
+                                                            offset: const Offset(0, 2),
+                                                          ),
+                                                        ]
+                                                      : null,
+                                                ),
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Row(
+                                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                      children: [
+                                                        Text(
+                                                          'Room $rNum',
+                                                          style: AppTypography.labelMedium.copyWith(
+                                                            fontSize: 13,
+                                                            fontWeight: FontWeight.w700,
+                                                            color: isSelected ? AppColors.primary : AppColors.textPrimary,
+                                                          ),
+                                                        ),
+                                                        Icon(
+                                                          isSelected ? Icons.check_circle : Icons.bed_outlined,
+                                                          size: 14,
+                                                          color: isSelected ? AppColors.primary : AppColors.textSecondary,
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    const SizedBox(height: 2),
+                                                    Text(
+                                                      rType,
+                                                      style: AppTypography.bodySmall.copyWith(
+                                                        fontSize: 10,
+                                                        fontWeight: FontWeight.w500,
+                                                        color: AppColors.textSecondary,
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                    Row(
+                                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                      children: [
+                                                        Text(
+                                                          rFloor,
+                                                          style: AppTypography.bodySmall.copyWith(
+                                                            fontSize: 9,
+                                                            color: AppColors.textMuted,
+                                                          ),
+                                                        ),
+                                                        Text(
+                                                          '₹$price',
+                                                          style: AppTypography.labelSmall.copyWith(
+                                                            fontSize: 10,
+                                                            fontWeight: FontWeight.w600,
+                                                            color: AppColors.primary,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            );
+                                          }).toList(),
+                                        ),
+                                      ),
+                          ),
+                          if (_selectedRooms.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  '${_selectedRooms.length} room${_selectedRooms.length > 1 ? "s" : ""} selected',
+                                  style: AppTypography.labelSmall.copyWith(
+                                    color: AppColors.primary,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                TextButton.icon(
+                                  onPressed: () {
+                                    setState(() {
+                                      _selectedRooms.clear();
+                                      _recalculateTariff();
+                                    });
+                                  },
+                                  icon: const Icon(Icons.clear_all_rounded, size: 14),
+                                  label: const Text('Clear All Rooms', style: TextStyle(fontSize: 11)),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: AppColors.departure,
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
                       );
                     },
                     loading: () => const LinearProgressIndicator(),

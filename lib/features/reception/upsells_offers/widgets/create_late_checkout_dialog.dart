@@ -10,31 +10,22 @@ import '../../../../data/providers/reception_providers.dart';
 import '../../../../services/supabase_service.dart';
 
 class CreateLateCheckoutDialog extends ConsumerStatefulWidget {
-  final String? initialStayId;
-  const CreateLateCheckoutDialog({super.key, this.initialStayId});
+  const CreateLateCheckoutDialog({super.key});
 
   @override
   ConsumerState<CreateLateCheckoutDialog> createState() => _CreateLateCheckoutDialogState();
 }
 
 class _CreateLateCheckoutDialogState extends ConsumerState<CreateLateCheckoutDialog> {
-  final _nameController = TextEditingController(text: 'Late Departure Privilege');
-  final _priceController = TextEditingController(text: '400');
+  String? _selectedCategory; // null means 'All Categories'
+  final _priceController = TextEditingController(text: '600');
 
-  String? _selectedStayId;
   DateTime _maxTime = DateTime.now().copyWith(hour: 18, minute: 0, second: 0);
   bool _isSubmitting = false;
   String? _errorMessage;
 
   @override
-  void initState() {
-    super.initState();
-    _selectedStayId = widget.initialStayId;
-  }
-
-  @override
   void dispose() {
-    _nameController.dispose();
     _priceController.dispose();
     super.dispose();
   }
@@ -49,7 +40,7 @@ class _CreateLateCheckoutDialogState extends ConsumerState<CreateLateCheckoutDia
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
           colorScheme: const ColorScheme.light(
-            primary: AppColors.primary,
+            primary: AppColors.purple,
             onPrimary: Colors.white,
             surface: AppColors.surface,
             onSurface: AppColors.textPrimary,
@@ -66,7 +57,7 @@ class _CreateLateCheckoutDialogState extends ConsumerState<CreateLateCheckoutDia
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
           colorScheme: const ColorScheme.light(
-            primary: AppColors.primary,
+            primary: AppColors.purple,
             onPrimary: Colors.white,
             surface: AppColors.surface,
             onSurface: AppColors.textPrimary,
@@ -82,13 +73,12 @@ class _CreateLateCheckoutDialogState extends ConsumerState<CreateLateCheckoutDia
     });
   }
 
-  Future<void> _submit() async {
-    final name = _nameController.text.trim();
+  Future<void> _submit(List<String> distinctCategories) async {
     final priceStr = _priceController.text.trim();
     final price = double.tryParse(priceStr);
 
-    if (name.isEmpty || price == null || price <= 0) {
-      setState(() => _errorMessage = 'Please provide valid offer name and hourly price.');
+    if (price == null || price <= 0) {
+      setState(() => _errorMessage = 'Please provide a valid hourly price (e.g. ₹600).');
       return;
     }
 
@@ -99,23 +89,38 @@ class _CreateLateCheckoutDialogState extends ConsumerState<CreateLateCheckoutDia
 
     try {
       final propId = await ref.read(resolvedPropertyIdProvider.future);
-      await SupabaseService.instance.createEarlyLateOffer(
-        propertyId: propId,
-        offerName: name,
-        stayId: _selectedStayId,
-        maxTime: _maxTime,
-        type: 'late_out',
-        pricePerHour: price,
-      );
 
-      ref.read(receptionRefreshSignalProvider.notifier).state++;
+      final targetCategories = _selectedCategory != null && _selectedCategory!.isNotEmpty
+          ? [_selectedCategory!]
+          : distinctCategories;
+
+      if (targetCategories.isEmpty) {
+        throw Exception('No room categories found for this property.');
+      }
+
+      for (final cat in targetCategories) {
+        await SupabaseService.instance.upsertCategoryEarlyLateOffer(
+          propertyId: propId,
+          type: 'late_out',
+          category: cat,
+          price: price,
+          isActive: true,
+          maxTime: _maxTime,
+        );
+      }
+
+      ref.invalidate(lateCheckoutOffersProvider);
 
       if (mounted) {
         Navigator.of(context).pop(true);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: AppColors.success,
-            content: Text('Late Check-Out Offer "$name" created at ₹${price.toStringAsFixed(0)}/hr!'),
+            backgroundColor: AppColors.purple,
+            content: Text(
+              _selectedCategory != null
+                  ? 'Late Check-Out pass for "$_selectedCategory" saved at ₹${price.toStringAsFixed(0)}/hr!'
+                  : 'Late Check-Out pass configured for all ${targetCategories.length} categories at ₹${price.toStringAsFixed(0)}/hr!',
+            ),
           ),
         );
       }
@@ -128,7 +133,12 @@ class _CreateLateCheckoutDialogState extends ConsumerState<CreateLateCheckoutDia
 
   @override
   Widget build(BuildContext context) {
-    final activeStaysAsync = ref.watch(activeStaysProvider);
+    final roomsAsync = ref.watch(receptionRoomsProvider);
+    final rooms = roomsAsync.valueOrNull ?? [];
+    final distinctCategories = rooms
+        .map((r) => (r['type'] ?? r['room_type'] ?? r['category'] ?? 'Standard').toString())
+        .toSet()
+        .toList();
 
     return Dialog(
       backgroundColor: AppColors.surface,
@@ -164,8 +174,8 @@ class _CreateLateCheckoutDialogState extends ConsumerState<CreateLateCheckoutDia
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('Create Late Check-Out Offer', style: AppTypography.titleMedium.copyWith(fontSize: isMobile ? 16 : 18)),
-                            Text('Enable in-house guests to extend their departure time', style: AppTypography.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis),
+                            Text('Configure Late Check-Out Offer', style: AppTypography.titleMedium.copyWith(fontSize: isMobile ? 16 : 18)),
+                            Text('Enable late departure privileges and set pricing per room type', style: AppTypography.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis),
                           ],
                         ),
                       ),
@@ -197,62 +207,46 @@ class _CreateLateCheckoutDialogState extends ConsumerState<CreateLateCheckoutDia
                       ),
                     ),
 
-                  LuxuryTextField(
-                    label: 'Offer Title',
-                    hintText: 'e.g. Late Departure Privilege',
-                    controller: _nameController,
-                  ),
-                  AppSpacing.gapV16,
-
-                  activeStaysAsync.when(
-                    data: (stays) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Target In-House Guest / Room', style: AppTypography.labelMedium),
-                          AppSpacing.gapV8,
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: AppColors.surfaceSubtle,
-                              borderRadius: AppSpacing.roundedMd,
-                              border: Border.all(color: AppColors.border),
-                            ),
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String?>(
-                                value: _selectedStayId,
-                                isExpanded: true,
-                                hint: const Text('All In-House Guests (Property-wide)'),
-                                items: [
-                                  const DropdownMenuItem<String?>(
-                                    value: null,
-                                    child: Text('🌟 Property-Wide Offer (All Active Guests)'),
-                                  ),
-                                  ...stays.map((stay) {
-                                    final id = (stay['stay_id'] ?? '').toString();
-                                    final name = (stay['guest_name'] ?? stay['user_name'] ?? 'Guest').toString();
-                                    final room = (stay['room_number'] ?? stay['room_no'] ?? '').toString();
-                                    return DropdownMenuItem<String?>(
-                                      value: id,
-                                      child: Text('Room $room · $name'),
-                                    );
-                                  }),
-                                ],
-                                onChanged: (val) => setState(() => _selectedStayId = val),
-                              ),
+                  // Room Category Dropdown
+                  Text('Target Room Category', style: AppTypography.labelMedium),
+                  AppSpacing.gapV8,
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceSubtle,
+                      borderRadius: AppSpacing.roundedMd,
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String?>(
+                        value: _selectedCategory,
+                        isExpanded: true,
+                        icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('🌟 All Room Categories', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ),
+                          ...distinctCategories.map(
+                            (cat) => DropdownMenuItem<String?>(
+                              value: cat,
+                              child: Text(cat),
                             ),
                           ),
                         ],
-                      );
-                    },
-                    loading: () => const SizedBox.shrink(),
-                    error: (_, __) => const SizedBox.shrink(),
+                        onChanged: (val) {
+                          setState(() {
+                            _selectedCategory = val;
+                          });
+                        },
+                      ),
+                    ),
                   ),
                   AppSpacing.gapV16,
 
                   LuxuryTextField(
-                    label: 'Price Per Hour (₹)',
-                    hintText: '400',
+                    label: 'Hourly Rate (₹ / room)',
+                    hintText: '600',
                     keyboardType: TextInputType.number,
                     controller: _priceController,
                   ),
@@ -300,11 +294,11 @@ class _CreateLateCheckoutDialogState extends ConsumerState<CreateLateCheckoutDia
                       ),
                       AppSpacing.gapH12,
                       LuxuryButton(
-                        text: 'Publish Late Offer',
+                        text: 'Save & Enable Offer',
                         variant: LuxuryButtonVariant.primary,
                         icon: Icons.check_circle_outline,
                         isLoading: _isSubmitting,
-                        onPressed: _submit,
+                        onPressed: () => _submit(distinctCategories),
                       ),
                     ],
                   ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -39,6 +40,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
     with TickerProviderStateMixin {
   bool _isLoading = true;
   late AnimationController _entranceController;
+  Timer? _autoRefreshTimer;
 
   // Three categorized order lists
   List<Map<String, dynamic>> _newOrders = [];
@@ -60,10 +62,15 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
       duration: const Duration(milliseconds: 600),
     );
     _loadData();
+    // Auto-refresh every 20 seconds in background
+    _autoRefreshTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => _loadData(isSilent: true),
+    );
   }
 
-  Future<void> _loadData() async {
-    if (mounted) {
+  Future<void> _loadData({bool isSilent = false}) async {
+    if (!isSilent && mounted) {
       setState(() {
         _isLoading = true;
         _errorMessage = null;
@@ -101,10 +108,12 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
 
           _isLoading = false;
         });
-        _entranceController.forward();
+        if (!isSilent) {
+          _entranceController.forward(from: 0);
+        }
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !isSilent) {
         setState(() {
           _isLoading = false;
           _errorMessage = e.toString().replaceFirst('Exception: ', '');
@@ -116,40 +125,47 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
 
   @override
   void dispose() {
+    _autoRefreshTimer?.cancel();
     _entranceController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return CustomScrollView(
-      slivers: [
-        DashboardAppBarWidget(
-          scaffoldKey: widget.scaffoldKey,
-          title: widget.selectedSection == 0
-              ? 'Dashboard'
-              : widget.selectedSection == 1
-              ? 'New Orders'
-              : widget.selectedSection == 2
-              ? 'Allot Orders'
-              : 'Track Orders',
-          subtitle: widget.propertyName,
-          roleColor: AppTheme.managerColor,
-          roleLabel: 'Service Manager',
-          employeeName: widget.employeeName,
-        ),
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: widget.isTablet ? 32 : 20,
-              vertical: 8,
-            ),
-            child: _isLoading
-                ? const ListSkeletonWidget(itemCount: 4)
-                : _buildSectionContent(),
+    return RefreshIndicator(
+      onRefresh: () => _loadData(),
+      color: AppTheme.managerColor,
+      backgroundColor: AppTheme.surface,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          DashboardAppBarWidget(
+            scaffoldKey: widget.scaffoldKey,
+            title: widget.selectedSection == 0
+                ? 'Dashboard'
+                : widget.selectedSection == 1
+                ? 'New Orders'
+                : widget.selectedSection == 2
+                ? 'Allot Orders'
+                : 'Track Orders',
+            subtitle: widget.propertyName,
+            roleColor: AppTheme.managerColor,
+            roleLabel: 'Service Manager',
+            employeeName: widget.employeeName,
           ),
-        ),
-      ],
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: widget.isTablet ? 32 : 20,
+                vertical: 8,
+              ),
+              child: _isLoading
+                  ? const ListSkeletonWidget(itemCount: 4)
+                  : _buildSectionContent(),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -184,7 +200,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: _loadData,
+              onPressed: () => _loadData(),
               icon: const Icon(Icons.refresh_rounded, size: 16),
               label: Text(
                 'Retry',
@@ -293,10 +309,10 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                   ],
                 ),
               ),
-              const Icon(
-                Icons.manage_accounts_rounded,
-                color: Colors.white54,
-                size: 40,
+              IconButton(
+                onPressed: () => _loadData(),
+                icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 28),
+                tooltip: 'Refresh Orders',
               ),
             ],
           ),
@@ -311,6 +327,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 '$newCount',
                 AppTheme.warning,
                 AppTheme.warningContainer,
+                onTap: () => widget.onSectionChanged(1),
               ),
             ),
             const SizedBox(width: 10),
@@ -320,6 +337,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 '$unallottedCount',
                 AppTheme.primary,
                 AppTheme.primaryContainer,
+                onTap: () => widget.onSectionChanged(2),
               ),
             ),
             const SizedBox(width: 10),
@@ -329,6 +347,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 '$allottedCount',
                 AppTheme.success,
                 AppTheme.successContainer,
+                onTap: () => widget.onSectionChanged(3),
               ),
             ),
           ],
@@ -412,8 +431,6 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
               .map((o) => _buildOrderCard(o, showAllotButton: true)),
         ],
 
-        const SizedBox(height: 20),
-
         const SizedBox(height: 24),
       ],
     );
@@ -426,20 +443,35 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 8),
-        Text(
-          'New Orders',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Accept or reject incoming service requests',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 13,
-            color: AppTheme.onSurfaceMuted,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'New Orders',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Accept, reject, or directly allot incoming requests',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    color: AppTheme.onSurfaceMuted,
+                  ),
+                ),
+              ],
+            ),
+            IconButton(
+              onPressed: () => _loadData(),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
+              tooltip: 'Refresh',
+            ),
+          ],
         ),
         const SizedBox(height: 20),
 
@@ -450,7 +482,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
             description: 'All incoming orders have been processed.',
           )
         else
-          ..._newOrders.map((o) => _buildOrderCard(o, showAcceptReject: true)),
+          ..._newOrders.map((o) => _buildOrderCard(o, showAcceptReject: true, showAllotButton: true)),
 
         const SizedBox(height: 24),
       ],
@@ -458,7 +490,6 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
   }
 
   // ─── SECTION 2: ALLOT ORDERS ─────────────────────────────────────────────
-  // Shows: (a) unallotted in_progress orders, (b) newly accepted (ordered) orders for allotment
 
   Widget _buildAllotOrders() {
     // Orders eligible for allotment: unallotted in_progress + new orders
@@ -468,20 +499,35 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 8),
-        Text(
-          'Allot Orders',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Assign service employees to orders',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 13,
-            color: AppTheme.onSurfaceMuted,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Allot Orders',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Tap any request or use selector to assign staff',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    color: AppTheme.onSurfaceMuted,
+                  ),
+                ),
+              ],
+            ),
+            IconButton(
+              onPressed: () => _loadData(),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
+              tooltip: 'Refresh',
+            ),
+          ],
         ),
         const SizedBox(height: 20),
 
@@ -530,174 +576,223 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
   Widget _buildAllotCard(Map<String, dynamic> order) {
     final orderId = order['so_id'] as String? ?? '';
     final roomNumber = order['room_number'] as String? ?? '-';
+    final isPoolSide = order['is_pool_side'] == true;
     final serviceName = order['serv_name'] as String? ?? 'Service';
     final status = order['status'] as String? ?? 'ordered';
-    final resolvedRoomId = order['resolved_room_id'] as String? ?? '';
     final amount = (order['so_total'] as num?)?.toDouble() ?? 0.0;
     final allottedEmpId = _pendingAllotments[orderId];
+    final items = (order['service_order_items'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: allottedEmpId != null
-              ? AppTheme.managerColor.withAlpha(80)
-              : AppTheme.outline,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(8),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+    return InkWell(
+      onTap: () => _showAllotOrderModal(order),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: allottedEmpId != null
+                ? AppTheme.managerColor.withAlpha(80)
+                : AppTheme.outline,
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              _orderIdBadge(orderId),
-              const SizedBox(width: 8),
-              _roomBadge(roomNumber),
-              const Spacer(),
-              StatusBadgeWidget(
-                status: status == 'ordered'
-                    ? BadgeStatus.pending
-                    : BadgeStatus.inProgress,
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            serviceName,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          if (amount > 0) ...[
-            const SizedBox(height: 2),
-            Text(
-              '₹${amount.toStringAsFixed(0)}',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.managerColor,
-              ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(8),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
           ],
-          const SizedBox(height: 12),
-
-          DropdownButtonFormField<String>(
-            initialValue: allottedEmpId,
-            hint: Text(
-              'Assign to employee',
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _orderIdBadge(orderId),
+                const SizedBox(width: 8),
+                _roomBadge(roomNumber, isPoolSide: isPoolSide),
+                const Spacer(),
+                StatusBadgeWidget(
+                  status: status == 'ordered'
+                      ? BadgeStatus.pending
+                      : BadgeStatus.inProgress,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              serviceName,
               style: GoogleFonts.plusJakartaSans(
-                fontSize: 13,
-                color: AppTheme.onSurfaceMuted,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
               ),
             ),
-            onChanged: (empId) async {
-              if (empId == null) return;
-              final emp = _serviceEmployees.firstWhere(
-                (e) => e['emp_id'] == empId,
-                orElse: () => {},
-              );
-              if (emp.isEmpty) return;
-
-              // If order is still 'ordered', accept it first
-              if (status == 'ordered') {
-                try {
-                  await SupabaseService.instance.updateOrderStatus(
-                    orderId,
-                    'in_progress',
-                  );
-                } catch (_) {}
-              }
-
-              try {
-                final session = SupabaseService.instance.currentSession;
-                await SupabaseService.instance.createOrderAllotment(
-                  orderId: orderId,
-                  employeeId: empId,
-                  alloterEmployeeId: session?.empId ?? empId,
-                  roomId: resolvedRoomId.isNotEmpty ? resolvedRoomId : empId,
-                  orderPrice: amount,
-                );
-                setState(() => _pendingAllotments[orderId] = empId);
-                Fluttertoast.showToast(
-                  msg: 'Order assigned to ${emp['full_name']}',
-                  backgroundColor: AppTheme.success,
-                  textColor: Colors.white,
-                );
-                _loadData();
-              } catch (e) {
-                Fluttertoast.showToast(
-                  msg: 'Failed to assign: $e',
-                  backgroundColor: AppTheme.error,
-                  textColor: Colors.white,
-                );
-              }
-            },
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: AppTheme.surfaceVariant,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: AppTheme.outline),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(
+            if (amount > 0) ...[
+              const SizedBox(height: 2),
+              Text(
+                '₹${amount.toStringAsFixed(0)}',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
                   color: AppTheme.managerColor,
-                  width: 2,
                 ),
               ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
-              ),
-            ),
-            items: _serviceEmployees.map((emp) {
-              final isActive = emp['is_active'] == true;
-              final name = emp['full_name'] as String? ?? 'Unknown';
-              return DropdownMenuItem<String>(
-                value: emp['emp_id'] as String,
-                child: Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: isActive ? AppTheme.success : AppTheme.warning,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        name,
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
+            ],
+            if (items.isNotEmpty) _buildOrderItemsSection(items, amount),
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: Builder(
+                    builder: (context) {
+                      final seen = <String>{};
+                      final uniqueEmployees = _serviceEmployees.where((e) {
+                        final id = e['emp_id']?.toString() ?? '';
+                        if (id.isEmpty || seen.contains(id)) return false;
+                        seen.add(id);
+                        return true;
+                      }).toList();
+
+                      final validInitialValue = (allottedEmpId != null &&
+                              uniqueEmployees.any((e) => e['emp_id'] == allottedEmpId))
+                          ? allottedEmpId
+                          : null;
+
+                      return DropdownButtonFormField<String>(
+                        initialValue: validInitialValue,
+                        hint: Text(
+                          uniqueEmployees.isEmpty
+                              ? 'No employees available'
+                              : 'Assign to employee',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13,
+                            color: AppTheme.onSurfaceMuted,
+                          ),
                         ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+                        onChanged: uniqueEmployees.isEmpty
+                            ? null
+                            : (empId) async {
+                                if (empId == null) return;
+                                final emp = uniqueEmployees.firstWhere(
+                                  (e) => e['emp_id'] == empId,
+                                  orElse: () => {},
+                                );
+                                if (emp.isEmpty) return;
+
+                                // If order is still 'ordered', accept it first
+                                if (status == 'ordered') {
+                                  try {
+                                    await SupabaseService.instance.updateOrderStatus(
+                                      orderId,
+                                      'in_progress',
+                                    );
+                                  } catch (_) {}
+                                }
+
+                                try {
+                                  final resolvedRoomId =
+                                      order['resolved_room_id'] as String? ??
+                                          (order['room_id'] as String? ?? '');
+                                  final session =
+                                      SupabaseService.instance.currentSession;
+                                  await SupabaseService.instance.createOrderAllotment(
+                                    orderId: orderId,
+                                    employeeId: empId,
+                                    alloterEmployeeId: session?.empId ?? empId,
+                                    roomId: resolvedRoomId,
+                                    roomNumber: roomNumber,
+                                    orderPrice: amount,
+                                  );
+                                  setState(() => _pendingAllotments[orderId] = empId);
+                                  Fluttertoast.showToast(
+                                    msg: 'Order assigned to ${emp['full_name']}',
+                                    backgroundColor: AppTheme.success,
+                                    textColor: Colors.white,
+                                  );
+                                  _loadData(isSilent: true);
+                                } catch (e) {
+                                  Fluttertoast.showToast(
+                                    msg: 'Failed to assign: $e',
+                                    backgroundColor: AppTheme.error,
+                                    textColor: Colors.white,
+                                  );
+                                }
+                              },
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: AppTheme.surfaceVariant,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide.none,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: AppTheme.outline),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(
+                              color: AppTheme.managerColor,
+                              width: 2,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                        ),
+                        items: uniqueEmployees.map((emp) {
+                          final empId = emp['emp_id']?.toString() ?? '';
+                          final isActive = emp['is_active'] == true;
+                          final name = emp['full_name'] as String? ?? 'Employee';
+                          return DropdownMenuItem<String>(
+                            value: empId,
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: isActive ? AppTheme.success : AppTheme.warning,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      );
+                    },
+                  ),
                 ),
-              );
-            }).toList(),
-          ),
-        ],
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  onPressed: () => _showAllotOrderModal(order),
+                  icon: const Icon(Icons.open_in_full_rounded, size: 18),
+                  tooltip: 'Full Assignment Dialog',
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppTheme.managerColor.withAlpha(20),
+                    foregroundColor: AppTheme.managerColor,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -709,20 +804,35 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 8),
-        Text(
-          'Order Tracking',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Live status of allotted service orders',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 13,
-            color: AppTheme.onSurfaceMuted,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Order Tracking',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Live status of allotted service orders',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    color: AppTheme.onSurfaceMuted,
+                  ),
+                ),
+              ],
+            ),
+            IconButton(
+              onPressed: () => _loadData(),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
+              tooltip: 'Refresh',
+            ),
+          ],
         ),
         const SizedBox(height: 20),
 
@@ -743,6 +853,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
   Widget _buildTrackCard(Map<String, dynamic> order) {
     final orderId = order['so_id'] as String? ?? '';
     final roomNumber = order['room_number'] as String? ?? '-';
+    final isPoolSide = order['is_pool_side'] == true;
     final serviceName = order['serv_name'] as String? ?? 'Service';
     final empName = order['allotted_employee_name'] as String? ?? 'Unknown';
     final createdAt = order['created_at'] as String? ?? '';
@@ -775,7 +886,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
             children: [
               _orderIdBadge(orderId),
               const SizedBox(width: 8),
-              _roomBadge(roomNumber),
+              _roomBadge(roomNumber, isPoolSide: isPoolSide),
               const Spacer(),
               Text(
                 timeStr,
@@ -813,12 +924,18 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
               ),
               if (phone.isNotEmpty) ...[
                 const Spacer(),
-                Text(
-                  phone,
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 11,
-                    color: AppTheme.onSurfaceMuted,
-                  ),
+                Row(
+                  children: [
+                    const Icon(Icons.phone_rounded, size: 11, color: AppTheme.onSurfaceMuted),
+                    const SizedBox(width: 4),
+                    Text(
+                      phone,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        color: AppTheme.onSurfaceMuted,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ],
@@ -829,7 +946,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
           // Progress steps
           Row(
             children: [
-              _buildTrackStep('Received', 0, 1, Icons.receipt_rounded),
+              _buildTrackStep('Order Placed', 0, 1, Icons.receipt_rounded),
               _buildTrackConnector(true),
               _buildTrackStep('In Progress', 1, 1, Icons.settings_rounded),
               _buildTrackConnector(false),
@@ -877,6 +994,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
     final isOrdered = status == 'ordered';
     final orderId = order['so_id'] as String? ?? '';
     final roomNumber = order['room_number'] as String? ?? '-';
+    final isPoolSide = order['is_pool_side'] == true;
     final serviceName = order['serv_name'] as String? ?? 'Service';
     final amount = (order['so_total'] as num?)?.toDouble() ?? 0.0;
     final createdAt = order['created_at'] as String? ?? '';
@@ -886,168 +1004,581 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
         (order['service_order_items'] as List?)?.cast<Map<String, dynamic>>() ??
         [];
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isOrdered ? AppTheme.warning.withAlpha(100) : AppTheme.outline,
-          width: isOrdered ? 1.5 : 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(8),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+    return InkWell(
+      onTap: () => _showAllotOrderModal(order),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isOrdered ? AppTheme.warning.withAlpha(100) : AppTheme.outline,
+            width: isOrdered ? 1.5 : 1,
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              _orderIdBadge(orderId),
-              const SizedBox(width: 8),
-              _roomBadge(roomNumber),
-              const Spacer(),
-              StatusBadgeWidget(
-                status: isOrdered
-                    ? BadgeStatus.pending
-                    : status == 'in_progress'
-                    ? BadgeStatus.inProgress
-                    : status == 'cancelled'
-                    ? BadgeStatus.cancelled
-                    : BadgeStatus.delivered,
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            serviceName,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: AppTheme.onSurface,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(8),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
-          ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              if (phone.isNotEmpty)
-                Text(
-                  phone,
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12,
-                    color: AppTheme.onSurfaceMuted,
-                  ),
-                ),
-              const Spacer(),
-              if (amount > 0)
-                Text(
-                  '₹${amount.toStringAsFixed(0)}',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.onSurface,
-                  ),
-                ),
-              const SizedBox(width: 8),
-              Text(
-                timeStr,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 11,
-                  color: AppTheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-          if (items.isNotEmpty) _buildOrderItemsSection(items, amount),
-          if (showAcceptReject && isOrdered) ...[
-            const SizedBox(height: 12),
-            const Divider(height: 1, color: AppTheme.outlineVariant),
-            const SizedBox(height: 10),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Row(
               children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showRejectDialog(orderId),
-                    icon: const Icon(Icons.close_rounded, size: 16),
-                    label: Text(
-                      'Reject',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+                _orderIdBadge(orderId),
+                const SizedBox(width: 8),
+                _roomBadge(roomNumber, isPoolSide: isPoolSide),
+                const Spacer(),
+                StatusBadgeWidget(
+                  status: isOrdered
+                      ? BadgeStatus.pending
+                      : status == 'in_progress'
+                      ? BadgeStatus.inProgress
+                      : status == 'cancelled'
+                      ? BadgeStatus.cancelled
+                      : BadgeStatus.delivered,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              serviceName,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                if (phone.isNotEmpty)
+                  Row(
+                    children: [
+                      const Icon(Icons.phone_rounded, size: 12, color: AppTheme.onSurfaceMuted),
+                      const SizedBox(width: 4),
+                      Text(
+                        phone,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          color: AppTheme.onSurfaceMuted,
+                        ),
                       ),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.error,
-                      side: const BorderSide(color: AppTheme.error),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
+                    ],
+                  ),
+                const Spacer(),
+                if (amount > 0)
+                  Text(
+                    '₹${amount.toStringAsFixed(0)}',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.onSurface,
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => _updateOrderStatus(orderId, 'in_progress'),
-                    icon: const Icon(Icons.check_rounded, size: 16),
-                    label: Text(
-                      'Accept',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.managerColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      elevation: 0,
-                    ),
+                const SizedBox(width: 8),
+                Text(
+                  timeStr,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    color: AppTheme.onSurfaceVariant,
                   ),
                 ),
               ],
             ),
-          ],
-          if (showAllotButton) ...[
-            const SizedBox(height: 12),
-            const Divider(height: 1, color: AppTheme.outlineVariant),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => widget.onSectionChanged(2),
-                icon: const Icon(Icons.assignment_ind_rounded, size: 16),
-                label: Text(
-                  'Allot Now',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+            if (items.isNotEmpty) _buildOrderItemsSection(items, amount),
+            if (showAcceptReject && isOrdered) ...[
+              const SizedBox(height: 12),
+              const Divider(height: 1, color: AppTheme.outlineVariant),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _showRejectDialog(orderId),
+                      icon: const Icon(Icons.close_rounded, size: 16),
+                      label: Text(
+                        'Reject',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.error,
+                        side: const BorderSide(color: AppTheme.error),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => _updateOrderStatus(orderId, 'in_progress'),
+                      icon: const Icon(Icons.check_rounded, size: 16),
+                      label: Text(
+                        'Accept',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.managerColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
                   ),
-                  elevation: 0,
+                ],
+              ),
+            ],
+            if (showAllotButton) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _showAllotOrderModal(order),
+                  icon: const Icon(Icons.assignment_ind_rounded, size: 16),
+                  label: Text(
+                    'Allot Now',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    elevation: 0,
+                  ),
                 ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
+    );
+  }
+
+  // ─── ALLOT ORDER MODAL (Tapping Request / Allot Now) ─────────────────────
+
+  Future<void> _showAllotOrderModal(Map<String, dynamic> order) async {
+    final orderId = order['so_id'] as String? ?? '';
+    final roomNumber = order['room_number'] as String? ?? '-';
+    final isPoolSide = order['is_pool_side'] == true;
+    final serviceName = order['serv_name'] as String? ?? 'Service';
+    final status = order['status'] as String? ?? 'ordered';
+    final amount = (order['so_total'] as num?)?.toDouble() ?? 0.0;
+    final phone = order['user_phone_no'] as String? ?? '';
+    final createdAt = order['created_at'] as String? ?? '';
+    final timeStr = createdAt.length >= 16 ? createdAt.substring(11, 16) : '';
+    final items = (order['service_order_items'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+    final seen = <String>{};
+    final uniqueEmployees = _serviceEmployees.where((e) {
+      final id = e['emp_id']?.toString() ?? '';
+      if (id.isEmpty || seen.contains(id)) return false;
+      seen.add(id);
+      return true;
+    }).toList();
+
+    String? selectedEmpId = _pendingAllotments[orderId] ??
+        (order['allotted_employee_id'] as String?);
+    if (selectedEmpId != null && !uniqueEmployees.any((e) => e['emp_id'] == selectedEmpId)) {
+      selectedEmpId = null;
+    }
+
+    bool isSubmitting = false;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (modalContext, setModalState) {
+            return Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.88,
+              ),
+              decoration: const BoxDecoration(
+                color: AppTheme.surface,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 16,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Drag Handle
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppTheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Header Title & Badges
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Assign Order to Staff',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.onSurface,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              serviceName,
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 13,
+                                color: AppTheme.onSurfaceMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _orderIdBadge(orderId),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Info chips (Room/Pool, Time, Phone, Amount)
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      _roomBadge(roomNumber, isPoolSide: isPoolSide),
+                      if (timeStr.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppTheme.surfaceVariant,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.access_time_rounded, size: 11, color: AppTheme.onSurfaceMuted),
+                              const SizedBox(width: 4),
+                              Text(
+                                timeStr,
+                                style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (phone.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppTheme.surfaceVariant,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.phone_rounded, size: 11, color: AppTheme.onSurfaceMuted),
+                              const SizedBox(width: 4),
+                              Text(
+                                phone,
+                                style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (amount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppTheme.managerColor.withAlpha(20),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '₹${amount.toStringAsFixed(0)}',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.managerColor,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1, color: AppTheme.outlineVariant),
+                  const SizedBox(height: 12),
+
+                  // Order items list snippet
+                  if (items.isNotEmpty) ...[
+                    Text(
+                      'Ordered Items (${items.length})',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.onSurfaceMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 120),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: items.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 4),
+                        itemBuilder: (_, i) {
+                          final it = items[i];
+                          final itemName = it['item_name'] as String? ?? '-';
+                          final qty = (it['qty'] as num?)?.toInt() ?? 1;
+                          final itemSp = (it['item_sp'] as num?)?.toDouble() ?? 0.0;
+                          final cost = (it['cost'] as num?)?.toDouble();
+                          final lineTot = cost ?? (qty * itemSp);
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  itemName,
+                                  style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w500),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              Text('× $qty', style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppTheme.onSurfaceMuted)),
+                              const SizedBox(width: 8),
+                              Text(
+                                lineTot > 0 ? '₹${lineTot.toStringAsFixed(0)}' : 'Included',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: lineTot > 0 ? AppTheme.onSurface : AppTheme.success,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(height: 1, color: AppTheme.outlineVariant),
+                    const SizedBox(height: 12),
+                  ],
+
+                  // Staff Selector Title
+                  Text(
+                    'Select Staff Member',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Staff options
+                  if (uniqueEmployees.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: AppTheme.warningContainer,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.warning_rounded, color: AppTheme.warning, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'No active service employees found for this department.',
+                              style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppTheme.warning),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: uniqueEmployees.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (_, idx) {
+                          final emp = uniqueEmployees[idx];
+                          final empId = emp['emp_id']?.toString() ?? '';
+                          final isSelected = selectedEmpId == empId;
+                          final isActive = emp['is_active'] == true;
+                          final name = emp['full_name'] as String? ?? 'Employee';
+                          final empPhone = emp['phone_no'] as String? ?? '';
+
+                          return InkWell(
+                            onTap: () {
+                              setModalState(() => selectedEmpId = empId);
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: isSelected ? AppTheme.managerColor.withAlpha(20) : AppTheme.surfaceVariant,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: isSelected ? AppTheme.managerColor : AppTheme.outline.withAlpha(80),
+                                  width: isSelected ? 1.5 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 10,
+                                    height: 10,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: isActive ? AppTheme.success : AppTheme.warning,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          name,
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 13,
+                                            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                            color: AppTheme.onSurface,
+                                          ),
+                                        ),
+                                        if (empPhone.isNotEmpty)
+                                          Text(
+                                            empPhone,
+                                            style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.onSurfaceMuted),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (isSelected)
+                                    const Icon(Icons.check_circle_rounded, color: AppTheme.managerColor, size: 20)
+                                  else
+                                    Icon(Icons.radio_button_unchecked_rounded, color: AppTheme.onSurfaceVariant, size: 20),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+
+                  const SizedBox(height: 16),
+
+                  // Confirm Assign Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      onPressed: (selectedEmpId == null || isSubmitting || uniqueEmployees.isEmpty)
+                          ? null
+                          : () async {
+                              setModalState(() => isSubmitting = true);
+                              final emp = uniqueEmployees.firstWhere((e) => e['emp_id'] == selectedEmpId, orElse: () => {});
+                              try {
+                                if (status == 'ordered') {
+                                  await SupabaseService.instance.updateOrderStatus(orderId, 'in_progress');
+                                }
+                                final resolvedRoomId =
+                                    order['resolved_room_id'] as String? ??
+                                        (order['room_id'] as String? ?? '');
+                                final session =
+                                    SupabaseService.instance.currentSession;
+                                await SupabaseService.instance.createOrderAllotment(
+                                  orderId: orderId,
+                                  employeeId: selectedEmpId!,
+                                  alloterEmployeeId: session?.empId ?? selectedEmpId!,
+                                  roomId: resolvedRoomId,
+                                  roomNumber: roomNumber,
+                                  orderPrice: amount,
+                                );
+                                if (mounted) {
+                                  setState(() => _pendingAllotments[orderId] = selectedEmpId!);
+                                }
+                                if (modalContext.mounted) {
+                                  Navigator.pop(modalContext);
+                                }
+                                Fluttertoast.showToast(
+                                  msg: 'Order assigned to ${emp['full_name'] ?? 'Staff'}',
+                                  backgroundColor: AppTheme.success,
+                                  textColor: Colors.white,
+                                );
+                                _loadData(isSilent: true);
+                              } catch (e) {
+                                setModalState(() => isSubmitting = false);
+                                Fluttertoast.showToast(
+                                  msg: 'Failed to assign: $e',
+                                  backgroundColor: AppTheme.error,
+                                  textColor: Colors.white,
+                                );
+                              }
+                            },
+                      icon: isSubmitting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.assignment_ind_rounded, size: 18),
+                      label: Text(
+                        isSubmitting ? 'Assigning...' : 'Confirm & Assign Staff',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.managerColor,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: AppTheme.outlineVariant,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1103,11 +1634,11 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '₹${lineTotal.toStringAsFixed(0)}',
+                  lineTotal > 0 ? '₹${lineTotal.toStringAsFixed(0)}' : 'Included',
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: AppTheme.onSurface,
+                    color: lineTotal > 0 ? AppTheme.onSurface : AppTheme.success,
                   ),
                 ),
               ],
@@ -1115,19 +1646,20 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
           );
         }),
         const SizedBox(height: 4),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            Text(
-              'Total: ₹${orderTotal.toStringAsFixed(0)}',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppTheme.managerColor,
+        if (orderTotal > 0)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Text(
+                'Total: ₹${orderTotal.toStringAsFixed(0)}',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.managerColor,
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
       ],
     );
   }
@@ -1152,28 +1684,38 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
     );
   }
 
-  Widget _roomBadge(String roomNumber) {
+  Widget _roomBadge(String roomNumber, {bool isPoolSide = false}) {
+    final bool isPool = isPoolSide ||
+        roomNumber.toLowerCase().contains('pool');
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: AppTheme.surfaceVariant,
+        color: isPool ? const Color(0xFFECFEFF) : AppTheme.surfaceVariant,
         borderRadius: BorderRadius.circular(8),
+        border: isPool
+            ? Border.all(color: const Color(0xFF06B6D4).withAlpha(80))
+            : null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
-            Icons.bed_rounded,
-            size: 11,
-            color: AppTheme.onSurfaceMuted,
+          Icon(
+            isPool ? Icons.pool_rounded : Icons.bed_rounded,
+            size: 12,
+            color: isPool ? const Color(0xFF0891B2) : AppTheme.onSurfaceMuted,
           ),
           const SizedBox(width: 4),
           Text(
-            'Room $roomNumber',
+            isPool
+                ? (roomNumber.toLowerCase().contains('pool')
+                    ? roomNumber
+                    : 'Poolside $roomNumber')
+                : (roomNumber.startsWith('Room') ? roomNumber : 'Room $roomNumber'),
             style: GoogleFonts.plusJakartaSans(
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: AppTheme.onSurface,
+              color: isPool ? const Color(0xFF0E7490) : AppTheme.onSurface,
             ),
           ),
         ],
@@ -1254,7 +1796,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
             : AppTheme.success,
         textColor: Colors.white,
       );
-      _loadData();
+      _loadData(isSilent: true);
     } catch (e) {
       Fluttertoast.showToast(
         msg: 'Failed: $e',
@@ -1312,47 +1854,57 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
     );
   }
 
-  Widget _buildKpi(String label, String value, Color color, Color bgColor) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withAlpha(40)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(8),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.onSurface,
+  Widget _buildKpi(
+    String label,
+    String value,
+    Color color,
+    Color bgColor, {
+    VoidCallback? onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withAlpha(40)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(8),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
-          ),
-          Text(
-            label,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-              color: AppTheme.onSurfaceMuted,
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: color),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.onSurface,
+              ),
+            ),
+            Text(
+              label,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: AppTheme.onSurfaceMuted,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -43,7 +43,7 @@ class GuestService {
       final requests = await _supabaseService.client
           .from('checkin_requests')
           .select(
-            'id, stay_id, main_user_id, submitted_req, status, remark, created_at, updated_at, checkin_code, accept_type',
+            'id, stay_id, main_user_id, submitted_req, status, remark, created_at, updated_at, checkin_code, accept_type, special_req',
           )
           .inFilter('stay_id', stayIds)
           .isFilter('deleted_at', null)
@@ -113,12 +113,21 @@ class GuestService {
 
         String? roomNum;
         String? roomId;
+        List<String> roomNumbers = [];
         final stayRooms = stay?['stay_rooms'] as List?;
         if (stayRooms != null && stayRooms.isNotEmpty) {
+          roomNumbers = stayRooms
+              .map((sr) {
+                final rMap = (sr as Map<String, dynamic>)['rooms'] as Map<String, dynamic>?;
+                return rMap?['room_number']?.toString();
+              })
+              .where((n) => n != null && n.isNotEmpty)
+              .cast<String>()
+              .toList();
+
           final sr = stayRooms.first as Map<String, dynamic>;
           roomId = sr['room_id']?.toString();
-          final rMap = sr['rooms'] as Map<String, dynamic>?;
-          roomNum = rMap?['room_number']?.toString();
+          roomNum = roomNumbers.isNotEmpty ? roomNumbers.join(', ') : null;
         }
 
         // Parse submitted guests and documents

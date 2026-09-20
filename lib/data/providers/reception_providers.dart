@@ -123,11 +123,7 @@ final earlyLateAcceptsProvider = FutureProvider<List<Map<String, dynamic>>>((ref
   final propId = await ref.watch(resolvedPropertyIdProvider.future);
   if (propId.isEmpty) return [];
   try {
-    final res = await SupabaseService.instance.client
-        .from('early_late_offer_accepts')
-        .select('*, early_late_offers(offer_name, price_per_hour), users(name, mobile_no), stay(stay_id, check_in_date, check_out_date)')
-        .order('created_at', ascending: false);
-    return List<Map<String, dynamic>>.from(res);
+    return await SupabaseService.instance.fetchEarlyLateAccepts(propId);
   } catch (_) {
     return [];
   }

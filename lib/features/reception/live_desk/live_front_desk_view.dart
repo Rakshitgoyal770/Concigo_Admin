@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/app_spacing.dart';
 import '../billing_departure/widgets/overdue_checkouts_card.dart';
+import 'widgets/bellboy_quick_queue.dart';
 import 'widgets/front_desk_kpis.dart';
 import 'widgets/live_room_matrix.dart';
 
@@ -46,6 +47,10 @@ class LiveFrontDeskView extends ConsumerWidget {
               LiveRoomMatrix(
                 onWalkInForRoom: onWalkInWithRoom,
               ),
+              AppSpacing.gapV24,
+
+              // 3. Bellboy & Luggage Dispatch Queue
+              const BellboyQuickQueue(),
               AppSpacing.gapV32,
             ],
           ),

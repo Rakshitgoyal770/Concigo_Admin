@@ -5,6 +5,8 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
 import '../../../../data/providers/reception_providers.dart';
+import '../../../../routes/app_routes.dart';
+import '../../../../services/supabase_service.dart';
 import '../live_desk/live_front_desk_view.dart';
 import '../arrivals_checkin/arrivals_checkin_view.dart';
 import '../upsells_offers/upsells_offers_view.dart';
@@ -46,6 +48,63 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
     showDialog(
       context: context,
       builder: (_) => InstantWalkInDialog(initialRoom: preselectedRoom),
+    );
+  }
+
+  void _showLogoutDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: const RoundedRectangleBorder(borderRadius: AppSpacing.roundedLg),
+        backgroundColor: AppColors.surface,
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppColors.departureLight,
+                borderRadius: AppSpacing.roundedSm,
+              ),
+              child: const Icon(Icons.logout_rounded, color: AppColors.departure, size: 20),
+            ),
+            AppSpacing.gapH12,
+            Text('Logout Front Desk', style: AppTypography.titleSmall),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to end your workstation session and log out?',
+          style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel', style: AppTypography.labelMedium.copyWith(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (widget.onLogout != null) {
+                widget.onLogout!();
+              } else {
+                SupabaseService.instance.clearSession();
+                Navigator.pushNamedAndRemoveUntil(
+                  context,
+                  AppRoutes.loginVerificationScreen,
+                  (route) => false,
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.departure,
+              foregroundColor: Colors.white,
+              shape: const RoundedRectangleBorder(borderRadius: AppSpacing.roundedSm),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+              elevation: 0,
+            ),
+            child: const Text('Confirm Logout'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -153,7 +212,7 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                       ),
 
                       if (!isMobile) ...[
-                        AppSpacing.gapH12,
+                        AppSpacing.gapH8,
                         // Desk Agent Profile Pill
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -184,6 +243,15 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                           ),
                         ),
                       ],
+
+                      AppSpacing.gapH8,
+
+                      // Logout Trigger
+                      IconButton(
+                        tooltip: 'Logout Front Desk',
+                        icon: const Icon(Icons.logout_rounded, size: 18, color: AppColors.departure),
+                        onPressed: () => _showLogoutDialog(context),
+                      ),
                     ],
                   ),
                 ),

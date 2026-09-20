@@ -118,6 +118,11 @@ class UpcomingArrivalsList extends ConsumerWidget {
                       final guestName = (stay['guest_name'] ?? stay['user_name'] ?? 'Guest').toString();
                       final phone = (stay['phone_number'] ?? stay['phone'] ?? stay['mobile_no'] ?? '').toString();
                       final roomNum = (stay['room_number'] ?? stay['room_no'] ?? 'Unassigned').toString();
+                      final roomLabel = roomNum.contains(',')
+                          ? 'Rooms $roomNum'
+                          : (roomNum.toLowerCase().startsWith('room') || roomNum.toLowerCase() == 'unassigned'
+                              ? roomNum
+                              : 'Room $roomNum');
                       final isKycDone = stay['is_kyc_verified'] == true || stay['kyc_status'] == 'APPROVED';
 
                       return Container(
@@ -148,7 +153,7 @@ class UpcomingArrivalsList extends ConsumerWidget {
                                           borderRadius: AppSpacing.roundedSm,
                                         ),
                                         child: Text(
-                                          'Room $roomNum',
+                                          roomLabel,
                                           style: AppTypography.monoRoom.copyWith(fontSize: 12),
                                         ),
                                       ),
@@ -198,7 +203,7 @@ class UpcomingArrivalsList extends ConsumerWidget {
                                     border: Border.all(color: AppColors.border),
                                   ),
                                   child: Text(
-                                    'Room $roomNum',
+                                    roomLabel,
                                     style: AppTypography.monoRoom.copyWith(fontSize: 13),
                                   ),
                                 ),

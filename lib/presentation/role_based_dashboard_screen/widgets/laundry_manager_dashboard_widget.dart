@@ -894,68 +894,90 @@ class _LaundryManagerDashboardWidgetState
             ),
           ),
           const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: currentAssignedId,
-            hint: Text(
-              'Assign to employee',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 13,
-                color: AppTheme.onSurfaceMuted,
-              ),
-            ),
-            onChanged: (empId) async {
-              if (empId == null) return;
-              await _assignEmployee(reqId, empId);
-            },
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: AppTheme.surfaceVariant,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: AppTheme.outline),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: _laundryColor, width: 2),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
-              ),
-            ),
-            items: _employees.map((emp) {
-              final name = emp['full_name'] as String? ?? 'Unknown';
-              return DropdownMenuItem<String>(
-                value: emp['emp_id'] as String,
-                child: Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppTheme.success,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        name,
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+          Builder(
+            builder: (context) {
+              final seen = <String>{};
+              final uniqueEmployees = _employees.where((e) {
+                final id = e['emp_id']?.toString() ?? '';
+                if (id.isEmpty || seen.contains(id)) return false;
+                seen.add(id);
+                return true;
+              }).toList();
+
+              final validInitialValue = (currentAssignedId != null &&
+                      uniqueEmployees.any((e) => e['emp_id'] == currentAssignedId))
+                  ? currentAssignedId
+                  : null;
+
+              return DropdownButtonFormField<String>(
+                initialValue: validInitialValue,
+                hint: Text(
+                  uniqueEmployees.isEmpty
+                      ? 'No employees available'
+                      : 'Assign to employee',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    color: AppTheme.onSurfaceMuted,
+                  ),
                 ),
+                onChanged: uniqueEmployees.isEmpty
+                    ? null
+                    : (empId) async {
+                        if (empId == null) return;
+                        await _assignEmployee(reqId, empId);
+                      },
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: AppTheme.surfaceVariant,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppTheme.outline),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: _laundryColor, width: 2),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                ),
+                items: uniqueEmployees.map((emp) {
+                  final empId = emp['emp_id']?.toString() ?? '';
+                  final name = emp['full_name'] as String? ?? 'Employee';
+                  return DropdownMenuItem<String>(
+                    value: empId,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppTheme.success,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            name,
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
               );
-            }).toList(),
+            },
           ),
         ],
       ),

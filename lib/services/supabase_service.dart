@@ -442,7 +442,7 @@ class SupabaseService {
       final response = await client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, users(name, mobile_no), stay_rooms(room_id, rooms(room_number))',
+            'stay_id, check_in_date, check_out_date, status, main_user_id, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), early_late_offer_accepts(type, time_selected)',
           )
           .eq('hotel_id', propertyId)
           .eq('status', 'Active')
@@ -461,7 +461,7 @@ class SupabaseService {
       final response = await client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, users(name, mobile_no), stay_rooms(room_id, rooms(room_number))',
+            'stay_id, check_in_date, check_out_date, status, main_user_id, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), early_late_offer_accepts(type, time_selected)',
           )
           .eq('hotel_id', propertyId)
           .isFilter('deleted_at', null)
@@ -708,16 +708,26 @@ class SupabaseService {
         map['guest_name'] = userMap?['name'] as String? ?? '—';
         map['mobile_no'] = userMap?['mobile_no'] as String? ?? '—';
 
-        // Resolve assigned room (first entry in stay_rooms)
+        // Resolve assigned rooms (all entries in stay_rooms)
         final stayRooms = map['stay_rooms'] as List?;
         if (stayRooms != null && stayRooms.isNotEmpty) {
-          final sr = stayRooms.first as Map<String, dynamic>;
-          map['room_id'] = sr['room_id'] as String?;
-          final roomMap = sr['rooms'] as Map<String, dynamic>?;
-          map['room_number'] = roomMap?['room_number'] as String?;
+          final roomNumbers = stayRooms
+              .map((sr) {
+                final roomMap = (sr as Map<String, dynamic>)['rooms'] as Map<String, dynamic>?;
+                return roomMap?['room_number']?.toString();
+              })
+              .where((n) => n != null && n.isNotEmpty)
+              .cast<String>()
+              .toList();
+
+          final srFirst = stayRooms.first as Map<String, dynamic>;
+          map['room_id'] = srFirst['room_id'] as String?;
+          map['room_number'] = roomNumbers.isNotEmpty ? roomNumbers.join(', ') : null;
+          map['room_numbers'] = roomNumbers;
         } else {
           map['room_id'] = null;
           map['room_number'] = null;
+          map['room_numbers'] = <String>[];
         }
 
         // Resolve checkin_requests status
@@ -1134,7 +1144,7 @@ class SupabaseService {
       var query = client
           .from('service_orders')
           .select(
-            'so_id, serv_id, stay_id, room_id, so_total, status, created_at, updated_at, order_type, user_phone_no, services(name), service_order_items(soi_id, item_name, qty, item_sp, cost)',
+            'so_id, serv_id, stay_id, room_id, delivery_location, so_total, status, created_at, updated_at, order_type, user_phone_no, services(name), service_order_items(soi_id, item_name, qty, item_sp, cost)',
           )
           .inFilter('status', ['ordered', 'in_progress']);
 
@@ -1173,15 +1183,15 @@ class SupabaseService {
         }
       }
 
-      // Step 4: Collect all room_ids (from stay_rooms + direct room_id on order)
+      // Step 4: Collect all room_ids (from direct room_id on order + stay_rooms)
       final allRoomIds = <String>{};
       for (final o in orders) {
         final stayId = o['stay_id'] as String?;
         final directRoomId = o['room_id'] as String?;
-        if (stayId != null && stayToRoomId.containsKey(stayId)) {
-          allRoomIds.add(stayToRoomId[stayId]!);
-        } else if (directRoomId != null) {
+        if (directRoomId != null && directRoomId.isNotEmpty) {
           allRoomIds.add(directRoomId);
+        } else if (stayId != null && stayToRoomId.containsKey(stayId)) {
+          allRoomIds.add(stayToRoomId[stayId]!);
         }
       }
 
@@ -1233,24 +1243,36 @@ class SupabaseService {
         final soId = o['so_id'] as String;
         final stayId = o['stay_id'] as String?;
         final directRoomId = o['room_id'] as String?;
+        final deliveryLocation = o['delivery_location'] as String?;
+        final orderType = o['order_type'] as String?;
         final status = o['status'] as String? ?? 'ordered';
         final serviceData = o['services'] as Map<String, dynamic>?;
 
-        // Resolve room number: prefer stay_rooms lookup, fallback to direct room_id
+        final bool isPoolSide = orderType == 'pool_side' ||
+            (deliveryLocation != null && deliveryLocation.trim().isNotEmpty &&
+                deliveryLocation.toLowerCase().contains('pool'));
+
+        // Resolve room number: prefer delivery location for poolside, then direct room_id, then stay_rooms
         String roomNumber = '-';
         String resolvedRoomId = '';
-        if (stayId != null && stayToRoomId.containsKey(stayId)) {
-          resolvedRoomId = stayToRoomId[stayId]!;
-          roomNumber = roomIdToNumber[resolvedRoomId] ?? '-';
-        } else if (directRoomId != null) {
+        if (isPoolSide) {
+          roomNumber = (deliveryLocation != null && deliveryLocation.trim().isNotEmpty)
+              ? deliveryLocation.trim()
+              : 'Poolside';
+        } else if (directRoomId != null && directRoomId.isNotEmpty) {
           resolvedRoomId = directRoomId;
           roomNumber = roomIdToNumber[directRoomId] ?? '-';
+        } else if (stayId != null && stayToRoomId.containsKey(stayId)) {
+          resolvedRoomId = stayToRoomId[stayId]!;
+          roomNumber = roomIdToNumber[resolvedRoomId] ?? '-';
         }
 
         final enriched = {
           ...o,
           'room_number': roomNumber,
           'resolved_room_id': resolvedRoomId,
+          'is_pool_side': isPoolSide,
+          'delivery_location': deliveryLocation,
           'serv_name': serviceData?['name'] ?? 'Service',
           'service_order_items': o['service_order_items'] ?? [],
         };
@@ -1527,10 +1549,24 @@ class SupabaseService {
     required String orderId,
     required String employeeId,
     required String alloterEmployeeId,
-    required String roomId,
+    String? roomId,
+    String? roomNumber,
     required double orderPrice,
   }) async {
     try {
+      // The `room_number` column in `order_allotments` table is of type UUID (references rooms.room_id).
+      // We safely validate and pass the UUID if valid, or null (for poolside / non-UUID locations).
+      String? targetRoomUuid;
+      final uuidRegex = RegExp(
+        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+      );
+
+      if (roomId != null && uuidRegex.hasMatch(roomId.trim())) {
+        targetRoomUuid = roomId.trim();
+      } else if (roomNumber != null && uuidRegex.hasMatch(roomNumber.trim())) {
+        targetRoomUuid = roomNumber.trim();
+      }
+
       // Check if allotment already exists for this order
       final existing = await client
           .from('order_allotments')
@@ -1542,7 +1578,10 @@ class SupabaseService {
         // Update existing allotment
         await client
             .from('order_allotments')
-            .update({'employee_id': employeeId})
+            .update({
+              'employee_id': employeeId,
+              if (targetRoomUuid != null) 'room_number': targetRoomUuid,
+            })
             .eq('orderid', orderId);
       } else {
         // Create new allotment
@@ -1550,7 +1589,7 @@ class SupabaseService {
           'orderid': orderId,
           'employee_id': employeeId,
           'alloter_employee_id': alloterEmployeeId,
-          'room_number': roomId,
+          'room_number': targetRoomUuid,
           'order_price': orderPrice,
         });
       }
@@ -2839,19 +2878,24 @@ class SupabaseService {
   /// Returns active offers ordered by created_at descending.
   Future<List<Map<String, dynamic>>> fetchEarlyLateOffers(
     String propertyId,
-    String type,
-  ) async {
+    String type, {
+    bool activeOnly = false,
+  }) async {
     try {
-      final response = await client
+      var query = client
           .from('early_late_offers')
           .select(
             'offer_id, property_id, offer_name, stay_id, min_time, max_time, '
             'type, price_per_hour, status, "limit", created_at, updated_at',
           )
           .eq('property_id', propertyId)
-          .eq('type', type)
-          .eq('status', 'active')
-          .order('created_at', ascending: false);
+          .eq('type', type);
+
+      if (activeOnly) {
+        query = query.eq('status', 'active');
+      }
+
+      final response = await query.order('created_at', ascending: false);
 
       final List<Map<String, dynamic>> results = [];
       for (final row in (response as List)) {
@@ -2944,6 +2988,124 @@ class SupabaseService {
     }
   }
 
+  /// Upsert an early check-in or late check-out offer for a specific room category
+  Future<void> upsertCategoryEarlyLateOffer({
+    required String propertyId,
+    required String type, // 'early_in' or 'late_out'
+    required String category,
+    required double price,
+    required bool isActive,
+    DateTime? minTime,
+    DateTime? maxTime,
+    int? limit,
+  }) async {
+    final cleanCategory = category.trim();
+    final offerName = '[$cleanCategory] ${type == 'early_in' ? 'Early Check-In Pass' : 'Late Check-Out Pass'}';
+    final status = isActive ? 'active' : 'disabled';
+
+    try {
+      // 1. Check for exact matching category offer
+      var existing = await client
+          .from('early_late_offers')
+          .select('offer_id')
+          .eq('property_id', propertyId)
+          .eq('type', type)
+          .eq('offer_name', offerName);
+
+      // Fallback check if stored with case variation
+      if ((existing as List).isEmpty) {
+        existing = await client
+            .from('early_late_offers')
+            .select('offer_id')
+            .eq('property_id', propertyId)
+            .eq('type', type)
+            .ilike('offer_name', '[$cleanCategory] %');
+      }
+
+      if ((existing as List).isNotEmpty) {
+        // Update all matching offer IDs precisely
+        for (final row in (existing as List)) {
+          final id = row['offer_id']?.toString();
+          if (id != null && id.isNotEmpty) {
+            await client
+                .from('early_late_offers')
+                .update({
+                  'offer_name': offerName,
+                  'price_per_hour': price,
+                  'status': status,
+                  if (minTime != null) 'min_time': minTime.toIso8601String(),
+                  if (maxTime != null) 'max_time': maxTime.toIso8601String(),
+                  'limit': limit,
+                  'updated_at': DateTime.now().toIso8601String(),
+                })
+                .eq('offer_id', id);
+          }
+        }
+      } else {
+        await client.from('early_late_offers').insert({
+          'property_id': propertyId,
+          'offer_name': offerName,
+          'type': type,
+          'price_per_hour': price,
+          'status': status,
+          if (minTime != null) 'min_time': minTime.toIso8601String(),
+          if (maxTime != null) 'max_time': maxTime.toIso8601String(),
+          'limit': limit,
+        });
+      }
+    } on PostgrestException catch (e) {
+      throw Exception('Failed to save category offer: ${e.message}');
+    }
+  }
+
+  /// Delete an early_late_offer record by offer_id.
+  Future<void> deleteEarlyLateOffer(String offerId) async {
+    try {
+      await client
+          .from('early_late_offers')
+          .delete()
+          .eq('offer_id', offerId);
+    } on PostgrestException catch (_) {
+      // If FK constraint prevents deletion, disable it instead
+      await client
+          .from('early_late_offers')
+          .update({'status': 'disabled', 'updated_at': DateTime.now().toIso8601String()})
+          .eq('offer_id', offerId);
+    }
+  }
+
+  /// Delete all early_late_offers for a specific room category and type.
+  Future<void> deleteCategoryEarlyLateOffer({
+    required String propertyId,
+    required String type,
+    required String category,
+  }) async {
+    final cleanCategory = category.trim();
+    final offerName = '[$cleanCategory] ${type == 'early_in' ? 'Early Check-In Pass' : 'Late Check-Out Pass'}';
+    try {
+      final existing = await client
+          .from('early_late_offers')
+          .select('offer_id')
+          .eq('property_id', propertyId)
+          .eq('type', type)
+          .eq('offer_name', offerName);
+
+      for (final row in (existing as List)) {
+        final id = row['offer_id']?.toString();
+        if (id != null && id.isNotEmpty) {
+          try {
+            await client.from('early_late_offers').delete().eq('offer_id', id);
+          } on PostgrestException catch (_) {
+            await client.from('early_late_offers').update({
+              'status': 'disabled',
+              'updated_at': DateTime.now().toIso8601String(),
+            }).eq('offer_id', id);
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
   /// Fetch all early_late_offer_accepts for a property with joined data.
   Future<List<Map<String, dynamic>>> fetchEarlyLateAccepts(
     String propertyId,
@@ -2995,19 +3157,28 @@ class SupabaseService {
           } catch (_) {}
         }
 
-        // Resolve room number via stay_id
+        // Resolve room numbers via stay_id
         final stayId = map['stay_id'] as String?;
         if (stayId != null) {
           try {
             final srResp = await client
                 .from('stay_rooms')
                 .select('rooms(room_number)')
-                .eq('stay_id', stayId)
-                .limit(1)
-                .maybeSingle();
-            if (srResp != null) {
-              final roomMap = srResp['rooms'] as Map<String, dynamic>?;
-              map['room_number'] = roomMap?['room_number'] as String? ?? '—';
+                .eq('stay_id', stayId);
+            if ((srResp as List).isNotEmpty) {
+              final roomNums = <String>[];
+              for (final sr in srResp) {
+                final roomMap = (sr as Map)['rooms'] as Map<String, dynamic>?;
+                final rNum = roomMap?['room_number']?.toString();
+                if (rNum != null && rNum.isNotEmpty) {
+                  roomNums.add(rNum);
+                }
+              }
+              if (roomNums.isNotEmpty) {
+                map['room_number'] = roomNums.join(', ');
+                map['room_numbers'] = roomNums.join(', ');
+                map['room_count'] = map['room_count'] ?? roomNums.length;
+              }
             }
           } catch (_) {}
         }

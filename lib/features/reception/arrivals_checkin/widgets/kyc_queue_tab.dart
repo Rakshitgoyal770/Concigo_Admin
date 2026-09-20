@@ -7,7 +7,6 @@ import '../../../../core/widgets/luxury_card.dart';
 import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../core/widgets/luxury_button.dart';
 import '../../../../data/providers/reception_providers.dart';
-import '../../../../data/providers/supabase_providers.dart';
 import 'kyc_inspector_modal.dart';
 
 class KycQueueTab extends ConsumerStatefulWidget {
