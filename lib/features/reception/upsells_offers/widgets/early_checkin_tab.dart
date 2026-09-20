@@ -165,6 +165,66 @@ class _EarlyCheckinTabState extends ConsumerState<EarlyCheckinTab> {
     );
   }
 
+  void _confirmResetOfferClaims(
+    BuildContext context,
+    String propId,
+    String category,
+    String? offerId,
+    int? limit,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.restart_alt_rounded, color: AppColors.primary, size: 22),
+            const SizedBox(width: 8),
+            Text('Reset Offer Claims', style: AppTypography.titleMedium),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to reset the claimed passes quota for "$category"?\n\nThis starts a fresh quota batch (0 / ${limit != null ? limit.toString() : 'Unlimited'} claimed) so upcoming guests can purchase early check-in passes again without deleting any past guest billing records.',
+          style: AppTypography.bodySmall,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              if (offerId != null && offerId.isNotEmpty) {
+                await SupabaseService.instance.resetEarlyLateOfferClaims(offerId);
+              } else {
+                await SupabaseService.instance.upsertCategoryEarlyLateOffer(
+                  propertyId: propId,
+                  type: 'early_in',
+                  category: category,
+                  price: 500,
+                  limit: limit,
+                  isActive: true,
+                );
+              }
+              ref.invalidate(earlyCheckinOffersProvider);
+              ref.invalidate(earlyLateAcceptsProvider);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    backgroundColor: AppColors.primary,
+                    content: Text('Claimed passes for "$category" reset to 0.'),
+                  ),
+                );
+              }
+            },
+            child: const Text('Reset Quota', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _confirmDeleteOffer(
     BuildContext context,
     String propId,
@@ -335,11 +395,21 @@ class _EarlyCheckinTabState extends ConsumerState<EarlyCheckinTab> {
 
                         final limit = (matchingOffer['limit'] as num?)?.toInt();
 
-                        // Count claimed passes for this category
+                        // Count claimed passes for this category (only accepts within the current cycle)
+                        final offerUpdatedAtStr = matchingOffer['updated_at']?.toString() ?? matchingOffer['created_at']?.toString();
+                        final offerCycleStart = offerUpdatedAtStr != null ? DateTime.tryParse(offerUpdatedAtStr)?.toUtc() : null;
+
                         int claimedPasses = 0;
                         if (offerId != null && offerId.isNotEmpty) {
                           for (final a in accepts) {
                             if (a['offer_id'] == offerId) {
+                              if (offerCycleStart != null) {
+                                final acceptCreatedAtStr = a['created_at']?.toString();
+                                final acceptCreatedAt = acceptCreatedAtStr != null ? DateTime.tryParse(acceptCreatedAtStr)?.toUtc() : null;
+                                if (acceptCreatedAt != null && acceptCreatedAt.isBefore(offerCycleStart)) {
+                                  continue; // Ignore accepts from prior cycles
+                                }
+                              }
                               claimedPasses += 1;
                             }
                           }
@@ -496,6 +566,12 @@ class _EarlyCheckinTabState extends ConsumerState<EarlyCheckinTab> {
                                 },
                               ),
                               const SizedBox(width: 4),
+                              IconButton(
+                                icon: const Icon(Icons.restart_alt_rounded, size: 19, color: AppColors.primary),
+                                tooltip: 'Reset Claimed Passes Quota (Start Fresh Batch)',
+                                onPressed: () => _confirmResetOfferClaims(context, propId, cat, offerId, limit),
+                              ),
+                              const SizedBox(width: 2),
                               IconButton(
                                 icon: const Icon(Icons.delete_outline, size: 18, color: AppColors.departure),
                                 tooltip: 'Delete Category Offer',

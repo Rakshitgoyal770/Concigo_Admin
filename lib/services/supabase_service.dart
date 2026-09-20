@@ -3058,6 +3058,18 @@ class SupabaseService {
     }
   }
 
+  /// Reset claim quota cycle for an offer by updating its updated_at timestamp to now (UTC)
+  Future<void> resetEarlyLateOfferClaims(String offerId) async {
+    try {
+      await client
+          .from('early_late_offers')
+          .update({'updated_at': DateTime.now().toUtc().toIso8601String()})
+          .eq('offer_id', offerId);
+    } on PostgrestException catch (e) {
+      throw Exception('Failed to reset offer claims: ${e.message}');
+    }
+  }
+
   /// Delete an early_late_offer record by offer_id.
   Future<void> deleteEarlyLateOffer(String offerId) async {
     try {
