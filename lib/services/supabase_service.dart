@@ -175,14 +175,24 @@ class SupabaseService {
   // OTP
   // ─────────────────────────────────────────────────────────────────────────
 
+  bool _isDevPhone(String normalized) {
+    return normalized == '+919999999999' ||
+        normalized == '+918888888888' ||
+        normalized == '+919876543210' ||
+        normalized == '+918950462002';
+  }
+
   Future<void> sendOtp(String phone) async {
+    // Normalize phone number to E.164
+    String normalised = phone.trim().replaceAll(RegExp(r'[\s\-\(\)]'), '');
+    if (!normalised.startsWith('+')) {
+      normalised = '+$normalised';
+    }
+
+    // Developer / bypass numbers: skip SMS to eliminate 100% of MSG91 costs
+    if (_isDevPhone(normalised)) return;
+
     try {
-      // Normalize phone number to E.164
-      String normalised = phone.trim().replaceAll(RegExp(r'[\s\-\(\)]'), '');
-      if (!normalised.startsWith('+')) {
-        normalised = '+$normalised';
-      }
-      
       // Use Supabase Auth OTP -> triggers MSG91 Send SMS Hook
       await client.auth.signInWithOtp(phone: normalised);
     } catch (e) {
@@ -204,12 +214,17 @@ class SupabaseService {
   }
 
   Future<bool> verifyOtp(String phone, String otp) async {
-    try {
-      String normalised = phone.trim().replaceAll(RegExp(r'[\s\-\(\)]'), '');
-      if (!normalised.startsWith('+')) {
-        normalised = '+$normalised';
-      }
+    String normalised = phone.trim().replaceAll(RegExp(r'[\s\-\(\)]'), '');
+    if (!normalised.startsWith('+')) {
+      normalised = '+$normalised';
+    }
 
+    if (_isDevPhone(normalised)) {
+      final code = otp.trim();
+      return code == '123456' || code == '000000' || code == '777777';
+    }
+
+    try {
       final res = await client.auth.verifyOTP(
         phone: normalised,
         token: otp.trim(),
