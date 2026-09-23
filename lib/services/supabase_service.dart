@@ -175,16 +175,11 @@ class SupabaseService {
   // OTP
   // ─────────────────────────────────────────────────────────────────────────
 
-  bool _isDevPhone(String phone) {
-    final digits = phone.replaceAll(RegExp(r'\D'), '');
-    return digits == '9876543210' ||
-        digits == '919876543210' ||
-        digits == '9999999999' ||
-        digits == '919999999999' ||
-        digits == '8950462002' ||
-        digits == '918950462002' ||
-        digits == '8888888888' ||
-        digits == '918888888888';
+  bool _isDevPhone(String normalized) {
+    return normalized == '+919999999999' ||
+        normalized == '+918888888888' ||
+        normalized == '+919876543210' ||
+        normalized == '+918950462002';
   }
 
   Future<void> sendOtp(String phone) async {
@@ -318,23 +313,6 @@ class SupabaseService {
         if ((rows as List).isNotEmpty) {
           return rows.first;
         }
-      }
-
-      // If developer bypass number, provide a default Superadmin profile for testing
-      if (_isDevPhone(phoneNumber)) {
-        return {
-          'emp_id': 'dev-admin-bypass',
-          'emp_f_name': 'Dev',
-          'emp_l_name': 'Admin',
-          'role': 'SUPERADMIN',
-          'property_id': '1f47276a-8ed2-4cec-9bb7-24cdcc5dedf5',
-          'service_dept': null,
-          'is_active': true,
-          'phone_no': phoneNumber,
-          'hotel_property': {
-            'name': 'The Oberoi'
-          }
-        };
       }
 
       return null;
