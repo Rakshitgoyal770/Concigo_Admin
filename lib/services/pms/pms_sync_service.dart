@@ -105,7 +105,7 @@ class PmsSyncService {
     final checkOutStr = res.checkOutDate.toIso8601String().split('T')[0];
     final stayStatus = res.status == 'InHouse'
         ? 'Active'
-        : (res.status == 'Canceled' ? 'Ended' : 'Upcoming');
+        : (res.status == 'Canceled' || res.status == 'CheckedOut' ? 'Ended' : 'Upcoming');
 
     // 2. Check if a stay row already exists for this guest & dates
     String stayId;
