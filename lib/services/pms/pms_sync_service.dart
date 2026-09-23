@@ -22,6 +22,43 @@ class PmsSyncService {
   bool _isSyncing = false;
   bool get isSyncing => _isSyncing;
 
+  Timer? _periodicTimer;
+  DateTime? _lastSyncTime;
+  DateTime? get lastSyncTime => _lastSyncTime;
+  VoidCallback? onSyncCompleted;
+
+  /// Starts an automatic polling loop that queries the PMS periodically (default: every 30 seconds).
+  void startPeriodicSync({
+    required String propertyId,
+    Duration interval = const Duration(seconds: 30),
+    VoidCallback? onComplete,
+  }) {
+    stopPeriodicSync();
+    if (onComplete != null) onSyncCompleted = onComplete;
+    debugPrint('[PmsSyncService] Auto-sync loop activated for property $propertyId (every ${interval.inSeconds}s)');
+
+    // Immediate initial sync in background
+    syncReservations(propertyId: propertyId).then((res) {
+      if (res.isSuccess) onSyncCompleted?.call();
+    });
+
+    _periodicTimer = Timer.periodic(interval, (_) async {
+      final res = await syncReservations(propertyId: propertyId);
+      if (res.isSuccess) {
+        onSyncCompleted?.call();
+      }
+    });
+  }
+
+  /// Stops the automatic polling loop.
+  void stopPeriodicSync() {
+    if (_periodicTimer != null) {
+      _periodicTimer!.cancel();
+      _periodicTimer = null;
+      debugPrint('[PmsSyncService] Auto-sync loop stopped.');
+    }
+  }
+
   /// Ingests live reservations from the hotel's configured PMS into Concigo Supabase.
   Future<PmsSyncResult> syncReservations({
     required String propertyId,
@@ -73,6 +110,7 @@ class PmsSyncService {
         }
       }
 
+      _lastSyncTime = DateTime.now();
       return PmsSyncResult(
         isSuccess: true,
         totalFetched: reservations.length,

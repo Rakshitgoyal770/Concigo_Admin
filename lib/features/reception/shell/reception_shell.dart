@@ -7,6 +7,7 @@ import '../../../../core/constants/app_spacing.dart';
 import '../../../../data/providers/reception_providers.dart';
 import '../../../../routes/app_routes.dart';
 import '../../../../services/supabase_service.dart';
+import '../../../../services/pms/pms_sync_service.dart';
 import '../live_desk/live_front_desk_view.dart';
 import '../arrivals_checkin/arrivals_checkin_view.dart';
 import '../upsells_offers/upsells_offers_view.dart';
@@ -40,8 +41,24 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.propertyId.isNotEmpty) {
         ref.read(activePropertyIdProvider.notifier).state = widget.propertyId;
+        // Start automatic PMS polling loop (every 30 seconds)
+        PmsSyncService.instance.startPeriodicSync(
+          propertyId: widget.propertyId,
+          interval: const Duration(seconds: 30),
+          onComplete: () {
+            if (mounted) {
+              ref.read(receptionRefreshSignalProvider.notifier).state++;
+            }
+          },
+        );
       }
     });
+  }
+
+  @override
+  void dispose() {
+    PmsSyncService.instance.stopPeriodicSync();
+    super.dispose();
   }
 
   void _openWalkIn([Map<String, dynamic>? preselectedRoom]) {
@@ -202,11 +219,54 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
 
                       const Spacer(),
 
+                      if (!isMobile) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: AppColors.successLight,
+                            borderRadius: AppSpacing.roundedFull,
+                            border: Border.all(color: AppColors.successBorder, width: 0.8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 7,
+                                height: 7,
+                                decoration: const BoxDecoration(
+                                  color: AppColors.success,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              AppSpacing.gapH4,
+                              Text(
+                                'PMS Auto-Sync (30s)',
+                                style: AppTypography.caption.copyWith(
+                                  color: AppColors.success,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        AppSpacing.gapH8,
+                      ],
+
                       // Sync / Refresh Trigger
                       IconButton(
-                        tooltip: 'Synchronize Live Data',
-                        icon: const Icon(Icons.refresh_rounded, size: 18, color: AppColors.textSecondary),
-                        onPressed: () {
+                        tooltip: 'Synchronize Live Data & PMS Now',
+                        icon: const Icon(Icons.sync_rounded, size: 19, color: AppColors.textSecondary),
+                        onPressed: () async {
+                          if (widget.propertyId.isNotEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Syncing with PMS...'),
+                                duration: Duration(seconds: 1),
+                              ),
+                            );
+                            await PmsSyncService.instance.syncReservations(propertyId: widget.propertyId);
+                          }
                           ref.read(receptionRefreshSignalProvider.notifier).state++;
                         },
                       ),
