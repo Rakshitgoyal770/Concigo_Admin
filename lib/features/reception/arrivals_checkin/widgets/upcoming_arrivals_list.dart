@@ -455,7 +455,7 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                               ),
                               child: LayoutBuilder(
                                 builder: (context, rowConstraints) {
-                                  final isRowNarrow = rowConstraints.maxWidth < 640;
+                                  final isRowNarrow = rowConstraints.maxWidth < 780;
 
                                   if (isRowNarrow) {
                                     return Column(
@@ -566,7 +566,7 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                                         label: arrivalBadgeLabel,
                                         variant: arrivalVariant,
                                         icon: arrivalIcon,
-                                        isSmall: false,
+                                        isSmall: true,
                                       ),
                                       AppSpacing.gapH8,
                                       LuxuryBadge(
@@ -574,7 +574,7 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                                         variant: isKycDone
                                             ? LuxuryBadgeVariant.success
                                             : LuxuryBadgeVariant.attention,
-                                        isSmall: false,
+                                        isSmall: true,
                                       ),
                                       AppSpacing.gapH12,
                                       LuxuryButton(
