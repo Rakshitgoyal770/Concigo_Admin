@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import '../../services/supabase_service.dart';
+import '../../services/pms/apaleo_service.dart';
 
 /// Clean Domain Service for Stays and Reservations
 /// Wraps existing queries and logic without modifying backend rules.
@@ -185,5 +187,25 @@ class StayService {
       validRoomIds.add(roomId.trim());
     }
     await _supabaseService.checkoutStay(stayId, validRoomIds);
+
+    // 2-Way PMS synchronization: Check out in Apaleo if linked
+    try {
+      final cr = await _supabaseService.client
+          .from('checkin_requests')
+          .select('remark')
+          .eq('stay_id', stayId)
+          .maybeSingle();
+
+      final remark = cr?['remark']?.toString() ?? '';
+      if (remark.startsWith('PMS:')) {
+        final pmsResId = remark.replaceFirst('PMS:', '').trim();
+        if (pmsResId.isNotEmpty) {
+          debugPrint('[StayService] Triggering Apaleo digital checkout for reservation $pmsResId...');
+          await ApaleoService.instance.checkOutReservation(pmsResId);
+        }
+      }
+    } catch (e) {
+      debugPrint('[StayService] PMS checkout trigger error: $e');
+    }
   }
 }

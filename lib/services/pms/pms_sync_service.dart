@@ -228,24 +228,64 @@ class PmsSyncService {
         ? 'Ended'
         : 'Upcoming';
 
-    // 2. Check if a stay row already exists for this guest & dates (Fix 1.1: exclude 'Ended' stays)
-    String stayId;
-    var query = _client
-        .from('stay')
-        .select('stay_id, status')
-        .eq('hotel_id', propertyId)
-        .eq('check_in_date', checkInStr)
-        .neq('status', 'Ended');
+    final pmsTag = 'PMS:${res.pmsReservationId}';
 
-    if (guestUserId != null) {
-      query = query.eq('main_user_id', guestUserId);
+    // 1. Check if this specific PMS reservation was ALREADY linked to a stay
+    String? stayId;
+    if (res.pmsReservationId.isNotEmpty) {
+      try {
+        final linkedReqList = await _client
+            .from('checkin_requests')
+            .select('stay_id, stay(status)')
+            .eq('remark', pmsTag)
+            .limit(1) as List;
+
+        if (linkedReqList.isNotEmpty) {
+          final stayData = linkedReqList.first['stay'] as Map<String, dynamic>?;
+          final existingStayStatus = stayData?['status'] as String?;
+          final linkedStayId = linkedReqList.first['stay_id'] as String?;
+
+          // If the stay linked to this PMS reservation was already Ended (checked out in Concigo),
+          // NEVER resurrect or recreate it!
+          if (existingStayStatus == 'Ended' && stayStatus != 'Ended') {
+            debugPrint('[PmsSyncService] Reservation ${res.pmsReservationId} was checked out in Concigo (Ended). Skipping resurrection.');
+            return;
+          }
+
+          if (linkedStayId != null) {
+            stayId = linkedStayId;
+          }
+        }
+      } catch (_) {}
     }
 
-    final existingList = await query.limit(1) as List;
+    // 2. If not already identified by PMS ID, check if an active stay exists for this guest & dates
+    if (stayId == null) {
+      var query = _client
+          .from('stay')
+          .select('stay_id, status')
+          .eq('hotel_id', propertyId)
+          .eq('check_in_date', checkInStr)
+          .neq('status', 'Ended');
 
-    if (existingList.isNotEmpty) {
-      stayId = existingList.first['stay_id'] as String;
-      final currentStatus = existingList.first['status'] as String?;
+      if (guestUserId != null) {
+        query = query.eq('main_user_id', guestUserId);
+      }
+
+      final existingList = await query.limit(1) as List;
+      if (existingList.isNotEmpty) {
+        stayId = existingList.first['stay_id'] as String;
+      }
+    }
+
+    if (stayId != null) {
+      final currentStay = await _client
+          .from('stay')
+          .select('status')
+          .eq('stay_id', stayId)
+          .maybeSingle();
+
+      final currentStatus = currentStay?['status'] as String?;
 
       // Preserve 'Active' if reception already activated this stay in Concigo
       if (currentStatus == 'Active' && stayStatus != 'Ended') {
@@ -298,6 +338,31 @@ class PmsSyncService {
           });
         } catch (_) {}
       }
+    }
+
+    // Ensure PMS reservation ID is recorded on checkin_requests for 2-way tracking
+    if (res.pmsReservationId.isNotEmpty) {
+      try {
+        final existingCr = await _client
+            .from('checkin_requests')
+            .select('id')
+            .eq('stay_id', stayId)
+            .limit(1) as List;
+
+        if (existingCr.isNotEmpty) {
+          await _client.from('checkin_requests').update({
+            'remark': pmsTag,
+          }).eq('id', existingCr.first['id']);
+        } else if (guestUserId != null) {
+          await _client.from('checkin_requests').insert({
+            'stay_id': stayId,
+            'main_user_id': guestUserId,
+            'status': 'pending',
+            'remark': pmsTag,
+            'submitted_req': [],
+          });
+        }
+      } catch (_) {}
     }
 
     // 3. Link Room in `rooms` & `stay_rooms`

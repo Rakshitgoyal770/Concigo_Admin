@@ -224,7 +224,7 @@ class ApaleoService {
     final token = await getValidAccessToken();
     if (token == null) return false;
 
-    final uri = Uri.parse('$_baseUrl/booking/v1/reservation-actions/$reservationId/check-out');
+    final uri = Uri.parse('$_baseUrl/booking/v1/reservation-actions/$reservationId/checkout');
     final resp = await http.put(
       uri,
       headers: {
@@ -232,6 +232,7 @@ class ApaleoService {
         'Content-Type': 'application/json',
       },
     );
+    print('[ApaleoService] checkOutReservation $reservationId: ${resp.statusCode} ${resp.body}');
 
     return resp.statusCode == 200 || resp.statusCode == 204;
   }
