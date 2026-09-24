@@ -34,14 +34,32 @@ class ApaleoAdapter implements PmsAdapter {
   }) async {
     try {
       final rawList = await _service.fetchUnitGroups(propertyId: propertyCode);
-      return rawList.map((ug) {
-        return CanonicalRoomCategory(
-          categoryCode: ug['code']?.toString() ?? '',
-          name: ug['name']?.toString() ?? ug['code']?.toString() ?? 'Standard Room',
-          description: ug['description']?.toString(),
-          maxOccupancy: (ug['maxPersons'] as num?)?.toInt() ?? 2,
-        );
-      }).toList();
+      final List<CanonicalRoomCategory> categories = [];
+      for (final ug in rawList) {
+        final id = ug['id']?.toString() ?? '';
+        final code = ug['code']?.toString() ?? '';
+        final name = ug['name']?.toString() ?? code;
+        final desc = ug['description']?.toString();
+        final maxPersons = (ug['maxPersons'] as num?)?.toInt() ?? 2;
+
+        if (id.isNotEmpty) {
+          categories.add(CanonicalRoomCategory(
+            categoryCode: id,
+            name: name,
+            description: desc,
+            maxOccupancy: maxPersons,
+          ));
+        }
+        if (code.isNotEmpty && code != id) {
+          categories.add(CanonicalRoomCategory(
+            categoryCode: code,
+            name: name,
+            description: desc,
+            maxOccupancy: maxPersons,
+          ));
+        }
+      }
+      return categories;
     } catch (_) {
       // Fallback: extract distinct room categories from active reservations
       try {
@@ -68,13 +86,62 @@ class ApaleoAdapter implements PmsAdapter {
   Future<List<CanonicalPhysicalRoom>> fetchPhysicalRooms({
     required String propertyCode,
   }) async {
+    Map<String, String> categoryNames = {};
+    try {
+      final categories = await fetchRoomCategories(propertyCode: propertyCode);
+      categoryNames = {for (final c in categories) c.categoryCode: c.name};
+    } catch (_) {}
+
     final rawList = await _service.fetchUnits(propertyId: propertyCode);
     return rawList.map((u) {
+      final unitGroup = u['unitGroup'] is Map ? (u['unitGroup'] as Map<String, dynamic>) : null;
+      final rawCatCode = unitGroup?['id']?.toString() ?? u['unitGroupId']?.toString() ?? '';
+      final roomNum = u['name']?.toString() ?? '';
+
+      // Determine floor from room number
+      int? floor;
+      if (roomNum.startsWith('G.') || roomNum.toLowerCase().startsWith('ground')) {
+        floor = 0;
+      } else if (RegExp(r'^(\d+)\.').hasMatch(roomNum)) {
+        final match = RegExp(r'^(\d+)\.').firstMatch(roomNum);
+        floor = int.tryParse(match?.group(1) ?? '');
+      } else {
+        final numVal = int.tryParse(roomNum);
+        if (numVal != null && numVal >= 100) {
+          floor = numVal ~/ 100;
+        }
+      }
+
+      // Determine human-readable category name
+      String? categoryName;
+      if (categoryNames.containsKey(rawCatCode)) {
+        categoryName = categoryNames[rawCatCode];
+      } else if (u['description'] != null && u['description'].toString().toLowerCase().contains('penthouse')) {
+        categoryName = 'Penthouse';
+      } else if (u['description'] != null && u['description'].toString().isNotEmpty) {
+        categoryName = u['description'].toString();
+      }
+
+      // Determine condition & occupancy
+      String statusStr = 'Clean';
+      bool isOccupied = false;
+      if (u['status'] is Map) {
+        final stMap = u['status'] as Map<String, dynamic>;
+        statusStr = stMap['condition']?.toString() ?? 'Clean';
+        isOccupied = stMap['isOccupied'] == true;
+      } else if (u['status'] != null) {
+        statusStr = u['status'].toString();
+      }
+
       return CanonicalPhysicalRoom(
         roomId: u['id']?.toString() ?? '',
-        roomNumber: u['name']?.toString() ?? '',
-        categoryCode: u['unitGroupId']?.toString() ?? '',
-        status: u['status']?.toString() ?? 'Clean',
+        roomNumber: roomNum,
+        categoryCode: rawCatCode,
+        categoryName: categoryName,
+        floor: floor,
+        maxOccupancy: (u['maxPersons'] as num?)?.toInt(),
+        status: statusStr,
+        isOccupied: isOccupied,
       );
     }).toList();
   }

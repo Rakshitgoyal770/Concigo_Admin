@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:developer' as dev;
 import 'dart:io';
 import 'package:http/http.dart' as http;
 
@@ -129,7 +128,7 @@ class ApaleoService {
     final token = await getValidAccessToken();
     if (token == null) throw Exception('Apaleo is not authenticated.');
 
-    final uri = Uri.parse('$_baseUrl/inventory/v1/unit-groups?propertyId=$propertyId');
+    final uri = Uri.parse('$_baseUrl/inventory/v1/unit-groups?propertyId=$propertyId&pageSize=100');
     final resp = await http.get(uri, headers: {'Authorization': 'Bearer $token'});
 
     if (resp.statusCode == 200) {
@@ -139,19 +138,37 @@ class ApaleoService {
     throw Exception('Failed to fetch unit groups: ${resp.statusCode} ${resp.body}');
   }
 
-  /// 1c. Fetch Physical Rooms (Units) for a Property
+  /// 1c. Fetch Physical Rooms (Units) for a Property with complete dynamic pagination
   Future<List<Map<String, dynamic>>> fetchUnits({required String propertyId}) async {
     final token = await getValidAccessToken();
     if (token == null) throw Exception('Apaleo is not authenticated.');
 
-    final uri = Uri.parse('$_baseUrl/inventory/v1/units?propertyId=$propertyId');
-    final resp = await http.get(uri, headers: {'Authorization': 'Bearer $token'});
+    final List<Map<String, dynamic>> allUnits = [];
+    int pageNumber = 1;
+    const int pageSize = 100;
+    int totalCount = 0;
 
-    if (resp.statusCode == 200) {
-      final data = jsonDecode(resp.body);
-      return (data['units'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-    }
-    throw Exception('Failed to fetch units: ${resp.statusCode} ${resp.body}');
+    do {
+      final uri = Uri.parse(
+        '$_baseUrl/inventory/v1/units?propertyId=$propertyId&pageNumber=$pageNumber&pageSize=$pageSize',
+      );
+      final resp = await http.get(uri, headers: {'Authorization': 'Bearer $token'});
+
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = (data['units'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+        allUnits.addAll(list);
+        totalCount = (data['count'] as num?)?.toInt() ?? allUnits.length;
+        if (list.length < pageSize || allUnits.length >= totalCount) {
+          break;
+        }
+        pageNumber++;
+      } else {
+        throw Exception('Failed to fetch units: ${resp.statusCode} ${resp.body}');
+      }
+    } while (allUnits.length < totalCount);
+
+    return allUnits;
   }
 
   /// 2. Fetch Live Reservations

@@ -26,6 +26,7 @@ class PmsSyncService {
   DateTime? _lastSyncTime;
   DateTime? get lastSyncTime => _lastSyncTime;
   VoidCallback? onSyncCompleted;
+  int _syncCycleCounter = 0;
 
   /// Starts an automatic polling loop that queries the PMS periodically (default: every 30 seconds).
   void startPeriodicSync({
@@ -35,14 +36,22 @@ class PmsSyncService {
   }) {
     stopPeriodicSync();
     if (onComplete != null) onSyncCompleted = onComplete;
+    _syncCycleCounter = 0;
     debugPrint('[PmsSyncService] Auto-sync loop activated for property $propertyId (every ${interval.inSeconds}s)');
 
-    // Immediate initial sync in background
-    syncReservations(propertyId: propertyId).then((res) {
-      if (res.isSuccess) onSyncCompleted?.call();
+    // Immediate initial sync: sync physical rooms first, then reservations
+    syncPhysicalRooms(propertyId: propertyId).then((_) {
+      syncReservations(propertyId: propertyId).then((res) {
+        if (res.isSuccess) onSyncCompleted?.call();
+      });
     });
 
     _periodicTimer = Timer.periodic(interval, (_) async {
+      _syncCycleCounter++;
+      // Re-sync physical rooms every 10 cycles (~5 minutes) to catch room extensions/modifications
+      if (_syncCycleCounter % 10 == 0) {
+        await syncPhysicalRooms(propertyId: propertyId);
+      }
       final res = await syncReservations(propertyId: propertyId);
       if (res.isSuccess) {
         onSyncCompleted?.call();
@@ -56,6 +65,77 @@ class PmsSyncService {
       _periodicTimer!.cancel();
       _periodicTimer = null;
       debugPrint('[PmsSyncService] Auto-sync loop stopped.');
+    }
+  }
+
+  /// Ingests all physical rooms from PMS directly into Supabase `rooms` table.
+  /// Dynamically provisions any new rooms or updates category/floor of existing rooms.
+  Future<int> syncPhysicalRooms({required String propertyId}) async {
+    try {
+      final context = await PmsFactory.getContextForHotel(
+        client: _client,
+        propertyId: propertyId,
+      );
+
+      debugPrint('[PmsSyncService] Fetching physical room inventory from ${context.adapter.provider} (${context.propertyCode})...');
+      final rooms = await context.adapter.fetchPhysicalRooms(
+        propertyCode: context.propertyCode,
+      );
+
+      if (rooms.isEmpty) {
+        debugPrint('[PmsSyncService] No physical rooms returned by PMS adapter.');
+        return 0;
+      }
+
+      // Query existing rooms in Supabase for this property
+      final existingRows = await _client
+          .from('rooms')
+          .select('room_id, room_number')
+          .eq('property_id', propertyId);
+
+      final Map<String, String> existingMap = {
+        for (final r in (existingRows as List))
+          r['room_number']?.toString() ?? '': r['room_id']?.toString() ?? '',
+      };
+
+      int upsertedCount = 0;
+      final List<Map<String, dynamic>> newRoomsToInsert = [];
+
+      for (final r in rooms) {
+        if (r.roomNumber.isEmpty) continue;
+        final roomId = existingMap[r.roomNumber];
+        final roomType = r.categoryName ?? (r.categoryCode.isNotEmpty ? r.categoryCode : 'Standard');
+
+        if (roomId != null) {
+          // Update room category & floor if needed
+          await _client.from('rooms').update({
+            'type': roomType,
+            if (r.floor != null) 'floor': r.floor,
+            'is_active': true,
+          }).eq('room_id', roomId);
+          upsertedCount++;
+        } else {
+          newRoomsToInsert.add({
+            'property_id': propertyId,
+            'room_number': r.roomNumber,
+            'type': roomType,
+            'floor': r.floor,
+            'is_active': true,
+            'is_booked': r.isOccupied,
+          });
+        }
+      }
+
+      if (newRoomsToInsert.isNotEmpty) {
+        await _client.from('rooms').insert(newRoomsToInsert);
+        upsertedCount += newRoomsToInsert.length;
+      }
+
+      debugPrint('[PmsSyncService] Successfully synchronized $upsertedCount physical rooms into Supabase.');
+      return upsertedCount;
+    } catch (e) {
+      debugPrint('[PmsSyncService] Failed to sync physical rooms: $e');
+      return 0;
     }
   }
 

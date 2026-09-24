@@ -115,15 +115,23 @@ class CanonicalRoomCategory {
 
 class CanonicalPhysicalRoom {
   final String roomId;      // PMS unit ID
-  final String roomNumber;  // e.g. '101', '204'
+  final String roomNumber;  // e.g. '101', '204', '1.001'
   final String categoryCode;
+  final String? categoryName;
+  final int? floor;
+  final int? maxOccupancy;
   final String status;      // 'Clean', 'CleanToBeInspected', 'Dirty'
+  final bool isOccupied;
 
   const CanonicalPhysicalRoom({
     required this.roomId,
     required this.roomNumber,
     required this.categoryCode,
+    this.categoryName,
+    this.floor,
+    this.maxOccupancy,
     required this.status,
+    this.isOccupied = false,
   });
 }
 
