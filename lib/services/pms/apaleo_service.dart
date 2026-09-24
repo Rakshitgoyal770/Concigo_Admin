@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 /// Production-grade Apaleo PMS Integration Service.
@@ -14,19 +15,21 @@ class ApaleoService {
 
   static const String _clientId = 'ZIKG-AC-CONCIGOAPP';
   static const String _clientSecret = 'n4cUcFMBSBLpmDge3YzeDW4FqGzBBo';
-  static const String _redirectUri = 'https://oauth.pstmn.io/v1/callback';
+  static const String _redirectUri = 'https://oauth.pstmn.io/v1/vscode-callback';
 
   // Config file path for persistent credentials
   static const String _configPath = 'lib/services/pms/apaleo_config.json';
 
-  String? _accessToken;
-  String? _refreshToken = '31424D7D45784AB01AEB69A2A2321074DCC7235E4407B88FE8B5B11B86FCE921-1';
-  DateTime? _expiresAt;
+  String? _accessToken =
+      'eyJhbGciOiJSUzI1NiIsImtpZCI6IkQ0NkU1MTc3QUY0ODI0Q0M2NTVDOUREOTFDQTY1QkQ0IiwidHlwIjoiYXQrand0In0.eyJpc3MiOiJodHRwczovL2lkZW50aXR5LmFwYWxlby5jb20iLCJuYmYiOjE3OTAyNTgyNDQsImlhdCI6MTc5MDI1ODI0NCwiZXhwIjoxNzkwMjYxODQ0LCJhdWQiOlsiYXBpIiwiaWRlbnRpdHlfc2VydmVyIiwibm90aWZpY2F0aW9ucyIsImFwYWxlbyJdLCJzY29wZSI6WyJvcGVuaWQiLCJyZXNlcnZhdGlvbnMucmVhZCIsInJlc2VydmF0aW9ucy5tYW5hZ2UiLCJmb2xpb3MucmVhZCIsImZvbGlvcy5tYW5hZ2UiLCJhdmFpbGFiaWxpdHkucmVhZCIsImF2YWlsYWJpbGl0eS5tYW5hZ2UiLCJzZXR1cC5yZWFkIiwic2V0dXAubWFuYWdlIiwib3BlcmF0aW9ucy5jaGFuZ2Utcm9vbS1zdGF0ZSIsIm9mZmxpbmVfYWNjZXNzIl0sImFtciI6WyJwd2QiXSwiY2xpZW50X2lkIjoiWklLRy1BQy1DT05DSUdPQVBQIiwic3ViIjoiZTJiMDljY2UtN2Q3MS00ZDQ1LWJkMGUtOGQ3YjIwMTlhNWI2IiwiYXV0aF90aW1lIjoxNzkwMjU0NTgwLCJpZHAiOiJsb2NhbCIsIm5hbWUiOiJyYWtzaGl0Z295YWw3NzBAZ21haWwuY29tIiwicm9sZSI6IkFjY291bnRBZG1pbiIsImFjY291bnRfY29kZSI6IlpJS0ciLCJzaWQiOiI2MEM4QzlGODQ4M0ZEMThEMDQ2MDY5MDQzRTZGQkU3MyIsImp0aSI6IjZBRURDMzJDNDM4ODQ3MjVBNDExNTM3MjhDNEFGMDdCIiwiYWNjb3VudF90eXBlIjoiRGV2ZWxvcG1lbnQifQ.Tou55CKvX8_bKoQpJ1trYRp9WA7U0Fn_2UZz27xgW-ryzqme4-ccBzpUH1vQQVUvsIRCvbRG2qLuGe-WNGDhvj6nJTW3sMKAuWHyy1IXhdEsdLdpFkLkJuAPcBZFu_TsfTFCEOYA-2P3TLkn_x7-2V5O6Si1ErThxvjKD_gTsW8ypgzkZx4EC49IdyqDkokvUwUTUSzOAppZ8v9-4X-utNSM9oxfmCoMpfmAdMggvhTN2Ktu0SU6yU8raahLovN6_JchP-4mmVKRjB41YMesqghmVmGa-szPze23rzqsnvWd_ZObdtXh-k5QV_4MdIKeKcuTzgIHQa8GUBC3SF4FZw';
+  String? _refreshToken = '08E8C4E15AB6184E598A4EF8D1B42D59FA89FD5F1AD4937678C8C5C3342F0F8D-1';
+  DateTime? _expiresAt = DateTime.parse('2026-09-24T20:27:24');
 
   bool get isConnected => _refreshToken != null && _refreshToken!.isNotEmpty;
 
   /// Initialize and load saved tokens if available
   Future<void> init() async {
+    if (kIsWeb) return;
     try {
       final file = File(_configPath);
       if (await file.exists()) {
@@ -89,6 +92,7 @@ class ApaleoService {
   }
 
   Future<void> _saveConfig() async {
+    if (kIsWeb) return;
     try {
       final file = File(_configPath);
       await file.parent.create(recursive: true);
