@@ -303,15 +303,25 @@ class PmsSyncService {
   /// Resolves an existing user by phone/email or creates a lightweight guest account.
   Future<String?> _resolveOrCreateGuestUser(CanonicalGuest guest) async {
     try {
-      final phone = guest.phone.trim();
+      final rawPhone = guest.phone.trim();
+      final phone = rawPhone.replaceAll(RegExp(r'[\s\-()]'), '');
+      final last10 = phone.length >= 10 ? phone.substring(phone.length - 10) : phone;
       final email = guest.email.trim();
 
       if (phone.isNotEmpty) {
-        final existingByPhone = await _client
+        var existingByPhone = await _client
             .from('users')
             .select('user_id')
             .eq('mobile_no', phone)
             .limit(1);
+
+        if ((existingByPhone as List).isEmpty && last10.isNotEmpty) {
+          existingByPhone = await _client
+              .from('users')
+              .select('user_id')
+              .ilike('mobile_no', '%$last10')
+              .limit(1);
+        }
 
         if ((existingByPhone as List).isNotEmpty) {
           return existingByPhone.first['user_id'] as String;
