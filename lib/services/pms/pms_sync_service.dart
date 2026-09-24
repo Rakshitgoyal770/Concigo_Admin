@@ -246,6 +246,20 @@ class PmsSyncService {
         'check_out_date': checkOutStr,
         'status': stayStatus,
       }).eq('stay_id', stayId);
+
+      // If stay ended (checked out in PMS), release assigned room(s)
+      if (stayStatus == 'Ended') {
+        final linkedStayRooms = await _client
+            .from('stay_rooms')
+            .select('room_id')
+            .eq('stay_id', stayId);
+        for (final sr in (linkedStayRooms as List)) {
+          final rid = sr['room_id']?.toString();
+          if (rid != null && rid.isNotEmpty) {
+            await _client.from('rooms').update({'is_booked': false}).eq('room_id', rid);
+          }
+        }
+      }
     } else {
       // Insert new stay
       final insertData = <String, dynamic>{

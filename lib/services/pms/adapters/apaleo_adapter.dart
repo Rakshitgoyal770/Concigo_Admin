@@ -22,7 +22,7 @@ class ApaleoAdapter implements PmsAdapter {
       propertyId: propertyCode,
       from: from,
       to: to,
-      statuses: statuses ?? ['Confirmed', 'InHouse'],
+      statuses: statuses ?? ['Confirmed', 'InHouse', 'CheckedOut'],
     );
 
     return rawList.map((r) => _mapToCanonical(r, propertyCode)).toList();
