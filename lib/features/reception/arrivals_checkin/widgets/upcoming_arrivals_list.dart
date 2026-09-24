@@ -387,7 +387,10 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                           separatorBuilder: (_, __) => AppSpacing.gapV12,
                           itemBuilder: (context, index) {
                             final stay = filteredStays[index];
-                            final guestName = (stay['guest_name'] ?? stay['user_name'] ?? 'Guest').toString();
+                            final rawGuestName = (stay['guest_name'] ?? stay['user_name'] ?? '').toString().trim();
+                            final guestName = (rawGuestName.isEmpty || rawGuestName == '—' || rawGuestName == 'Guest')
+                                ? 'Guest (Unassigned)'
+                                : rawGuestName;
                             final phone = (stay['phone_number'] ?? stay['phone'] ?? stay['mobile_no'] ?? '').toString();
                             final roomNum = (stay['room_number'] ?? stay['room_no'] ?? 'Unassigned').toString();
                             final roomLabel = roomNum.contains(',')
@@ -407,11 +410,16 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
 
                             if (checkIn != null) {
                               final day = DateTime(checkIn.year, checkIn.month, checkIn.day);
-                              final isTodayArrival = _isSameDay(day, today) || day.isBefore(today);
+                              final isOverdue = day.isBefore(today);
+                              final isTodayArrival = _isSameDay(day, today);
                               final isTomorrowArrival = _isSameDay(day, tomorrow);
                               final dateFormatted = DateFormat('d MMM yyyy').format(checkIn);
 
-                              if (isTodayArrival) {
+                              if (isOverdue) {
+                                arrivalBadgeLabel = 'Overdue, $dateFormatted';
+                                arrivalVariant = LuxuryBadgeVariant.departure;
+                                arrivalIcon = Icons.warning_amber_rounded;
+                              } else if (isTodayArrival) {
                                 arrivalBadgeLabel = 'Today, $dateFormatted';
                                 arrivalVariant = LuxuryBadgeVariant.attention;
                                 arrivalIcon = Icons.today_rounded;

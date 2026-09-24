@@ -221,17 +221,21 @@ class PmsSyncService {
 
     final checkInStr = res.checkInDate.toIso8601String().split('T')[0];
     final checkOutStr = res.checkOutDate.toIso8601String().split('T')[0];
-    final stayStatus = res.status == 'InHouse'
-        ? 'Active'
-        : (res.status == 'Canceled' || res.status == 'CheckedOut' ? 'Ended' : 'Upcoming');
+    // Fix 1.3: Prevent PMS status discrepancies from hiding arrivals.
+    // Default to 'Upcoming' so reception can see and activate the stay,
+    // unless PMS explicitly states Canceled or CheckedOut ('Ended').
+    String stayStatus = (res.status == 'Canceled' || res.status == 'CheckedOut')
+        ? 'Ended'
+        : 'Upcoming';
 
-    // 2. Check if a stay row already exists for this guest & dates
+    // 2. Check if a stay row already exists for this guest & dates (Fix 1.1: exclude 'Ended' stays)
     String stayId;
     var query = _client
         .from('stay')
         .select('stay_id, status')
         .eq('hotel_id', propertyId)
-        .eq('check_in_date', checkInStr);
+        .eq('check_in_date', checkInStr)
+        .neq('status', 'Ended');
 
     if (guestUserId != null) {
       query = query.eq('main_user_id', guestUserId);
@@ -241,6 +245,13 @@ class PmsSyncService {
 
     if (existingList.isNotEmpty) {
       stayId = existingList.first['stay_id'] as String;
+      final currentStatus = existingList.first['status'] as String?;
+
+      // Preserve 'Active' if reception already activated this stay in Concigo
+      if (currentStatus == 'Active' && stayStatus != 'Ended') {
+        stayStatus = 'Active';
+      }
+
       // Update dates & status
       await _client.from('stay').update({
         'check_out_date': checkOutStr,
@@ -307,6 +318,7 @@ class PmsSyncService {
       final phone = rawPhone.replaceAll(RegExp(r'[\s\-()]'), '');
       final last10 = phone.length >= 10 ? phone.substring(phone.length - 10) : phone;
       final email = guest.email.trim();
+      final incomingName = guest.fullName.trim();
 
       if (phone.isNotEmpty) {
         var existingByPhone = await _client
@@ -324,7 +336,19 @@ class PmsSyncService {
         }
 
         if ((existingByPhone as List).isNotEmpty) {
-          return existingByPhone.first['user_id'] as String;
+          final userId = existingByPhone.first['user_id'] as String;
+          // Fix 1.2: If incoming guest name is provided, update user record so desk displays it
+          if (incomingName.isNotEmpty && incomingName != 'Guest') {
+            try {
+              await _client.from('users').update({
+                'name': incomingName,
+                if (guest.firstName.isNotEmpty) 'first_name': guest.firstName,
+                if (guest.lastName.isNotEmpty) 'last_name': guest.lastName,
+                if (email.isNotEmpty) 'email': email,
+              }).eq('user_id', userId);
+            } catch (_) {}
+          }
+          return userId;
         }
       }
 
@@ -336,7 +360,17 @@ class PmsSyncService {
             .limit(1);
 
         if ((existingByEmail as List).isNotEmpty) {
-          return existingByEmail.first['user_id'] as String;
+          final userId = existingByEmail.first['user_id'] as String;
+          if (incomingName.isNotEmpty && incomingName != 'Guest') {
+            try {
+              await _client.from('users').update({
+                'name': incomingName,
+                if (guest.firstName.isNotEmpty) 'first_name': guest.firstName,
+                if (guest.lastName.isNotEmpty) 'last_name': guest.lastName,
+              }).eq('user_id', userId);
+            } catch (_) {}
+          }
+          return userId;
         }
       }
 
