@@ -1,18 +1,23 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
+import '../../../../core/widgets/live_heartbeat_badge.dart';
 import '../../../../core/widgets/luxury_card.dart';
 import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../core/widgets/luxury_button.dart';
 import '../../../../data/providers/reception_providers.dart';
+import '../../../../services/supabase_service.dart';
 import 'activate_upcoming_stay_modal.dart';
 import 'create_upcoming_booking_dialog.dart';
 
 enum ArrivalDateFilter {
   all,
+  overdue,
   today,
   tomorrow,
   next7Days,
@@ -29,6 +34,71 @@ class UpcomingArrivalsList extends ConsumerStatefulWidget {
 class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
   ArrivalDateFilter _selectedFilter = ArrivalDateFilter.all;
   DateTime? _customDate;
+
+  Timer? _heartbeatTimer;
+  DateTime _lastPulseTime = DateTime.now();
+  bool _isSyncing = false;
+  RealtimeChannel? _realtimeChannel;
+
+  @override
+  void initState() {
+    super.initState();
+    // 1. Periodic Heartbeat: Silently refresh arrivals every 10 seconds
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _pulseHeartbeat(silent: true);
+    });
+
+    // 2. Realtime WebSocket: Instantly refresh on any stay row changes
+    _subscribeToRealtime();
+  }
+
+  void _subscribeToRealtime() {
+    try {
+      _realtimeChannel = SupabaseService.instance.client
+          .channel('upcoming_arrivals_heartbeat_${DateTime.now().millisecondsSinceEpoch}')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'stay',
+            callback: (payload) {
+              debugPrint('⚡ [Upcoming Arrivals Heartbeat] Realtime stay event: ${payload.eventType}');
+              _pulseHeartbeat(silent: true);
+            },
+          )
+          .subscribe();
+    } catch (e) {
+      debugPrint('⚠️ [Upcoming Arrivals Heartbeat] Realtime subscription error: $e');
+    }
+  }
+
+  void _unsubscribeRealtime() {
+    try {
+      if (_realtimeChannel != null) {
+        SupabaseService.instance.client.removeChannel(_realtimeChannel!);
+        _realtimeChannel = null;
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _pulseHeartbeat({bool silent = false}) async {
+    if (_isSyncing) return;
+    if (!silent && mounted) setState(() => _isSyncing = true);
+    _lastPulseTime = DateTime.now();
+
+    // Silently re-query upcoming arrivals provider
+    ref.invalidate(upcomingStaysProvider);
+
+    if (mounted) {
+      setState(() => _isSyncing = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _heartbeatTimer?.cancel();
+    _unsubscribeRealtime();
+    super.dispose();
+  }
 
   DateTime? _parseDate(dynamic val) {
     if (val == null) return null;
@@ -76,7 +146,9 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
     required bool isSelected,
     required VoidCallback onTap,
     IconData? icon,
+    Color? color,
   }) {
+    final activeColor = color ?? AppColors.primary;
     return InkWell(
       onTap: onTap,
       borderRadius: AppSpacing.roundedSm,
@@ -84,10 +156,10 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary : AppColors.surface,
+          color: isSelected ? activeColor : AppColors.surface,
           borderRadius: AppSpacing.roundedSm,
           border: Border.all(
-            color: isSelected ? AppColors.primary : AppColors.border,
+            color: isSelected ? activeColor : AppColors.border,
             width: 1,
           ),
           boxShadow: isSelected ? const [AppColors.shadowSm] : null,
@@ -176,7 +248,15 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                       ],
                     ),
                   ),
-                  if (!isMobile)
+                  if (!isMobile) ...[
+                    LiveHeartbeatBadge(
+                      lastPulseTime: _lastPulseTime,
+                      isSyncing: _isSyncing,
+                      intervalSeconds: 10,
+                      label: 'LIVE ARRIVALS',
+                      onTap: () => _pulseHeartbeat(silent: false),
+                    ),
+                    AppSpacing.gapH12,
                     LuxuryButton(
                       text: '+ New Booking',
                       variant: LuxuryButtonVariant.outline,
@@ -188,21 +268,36 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                         );
                       },
                     ),
+                  ],
                 ],
               ),
               if (isMobile) ...[
                 AppSpacing.gapV12,
-                LuxuryButton(
-                  text: '+ New Booking',
-                  variant: LuxuryButtonVariant.outline,
-                  icon: Icons.add_circle_outline_rounded,
-                  isExpanded: true,
-                  onPressed: () {
-                    showDialog(
-                      context: context,
-                      builder: (_) => const CreateUpcomingBookingDialog(),
-                    );
-                  },
+                Row(
+                  children: [
+                    LiveHeartbeatBadge(
+                      lastPulseTime: _lastPulseTime,
+                      isSyncing: _isSyncing,
+                      intervalSeconds: 10,
+                      label: 'LIVE',
+                      onTap: () => _pulseHeartbeat(silent: false),
+                    ),
+                    AppSpacing.gapH8,
+                    Expanded(
+                      child: LuxuryButton(
+                        text: '+ New Booking',
+                        variant: LuxuryButtonVariant.outline,
+                        icon: Icons.add_circle_outline_rounded,
+                        isExpanded: true,
+                        onPressed: () {
+                          showDialog(
+                            context: context,
+                            builder: (_) => const CreateUpcomingBookingDialog(),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ],
               AppSpacing.gapV16,
@@ -238,7 +333,8 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                     );
                   }
 
-                  // Compute category counts
+                  // Compute category counts — ISSUE-14: separate overdue from today
+                  int overdueCount = 0;
                   int todayCount = 0;
                   int tomorrowCount = 0;
                   int next7DaysCount = 0;
@@ -247,7 +343,9 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                     final d = _parseDate(s['check_in_date']);
                     if (d == null) continue;
                     final day = DateTime(d.year, d.month, d.day);
-                    if (_isSameDay(day, today) || day.isBefore(today)) {
+                    if (day.isBefore(today)) {
+                      overdueCount++;
+                    } else if (_isSameDay(day, today)) {
                       todayCount++;
                     }
                     if (_isSameDay(day, tomorrow)) {
@@ -265,8 +363,10 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                     final day = DateTime(d.year, d.month, d.day);
 
                     switch (_selectedFilter) {
+                      case ArrivalDateFilter.overdue:
+                        return day.isBefore(today);
                       case ArrivalDateFilter.today:
-                        return _isSameDay(day, today) || day.isBefore(today);
+                        return _isSameDay(day, today);
                       case ArrivalDateFilter.tomorrow:
                         return _isSameDay(day, tomorrow);
                       case ArrivalDateFilter.next7Days:
@@ -297,6 +397,17 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                               isSelected: _selectedFilter == ArrivalDateFilter.all,
                               onTap: () => setState(() => _selectedFilter = ArrivalDateFilter.all),
                             ),
+                            if (overdueCount > 0) ...[
+                              AppSpacing.gapH8,
+                              _buildFilterChip(
+                                label: 'Overdue',
+                                count: overdueCount,
+                                icon: Icons.warning_amber_rounded,
+                                isSelected: _selectedFilter == ArrivalDateFilter.overdue,
+                                onTap: () => setState(() => _selectedFilter = ArrivalDateFilter.overdue),
+                                color: AppColors.departure,
+                              ),
+                            ],
                             AppSpacing.gapH8,
                             _buildFilterChip(
                               label: 'Today',
@@ -443,10 +554,23 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                               durationText = '$inFmt – $outFmt (${nights > 0 ? "$nights ${nights == 1 ? 'night' : 'nights'}" : "1 night"})';
                             }
 
+                            // ISSUE-17: Dynamic booking source label from `remark` field
+                            final remark = (stay['remark'] ?? stay['checkin_code'] ?? '').toString();
+                            String bookingSource;
+                            if (remark.startsWith('PMS:')) {
+                              bookingSource = 'PMS Booking';
+                            } else if (remark.startsWith('MANUAL:')) {
+                              bookingSource = 'Manual Booking';
+                            } else if (remark.startsWith('WALKIN:')) {
+                              bookingSource = 'Walk-In';
+                            } else {
+                              bookingSource = 'App Booking';
+                            }
+
                             final subtitleParts = [
                               if (phone.isNotEmpty && phone != '—') phone,
                               if (durationText.isNotEmpty) durationText,
-                              'Online Booking',
+                              bookingSource,
                             ];
 
                             return Container(

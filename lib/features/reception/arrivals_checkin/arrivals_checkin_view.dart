@@ -39,7 +39,8 @@ class _ArrivalsCheckinViewState extends ConsumerState<ArrivalsCheckinView> with 
 
     final pendingKycCount = kycRequestsAsync.value?.where((r) {
       final st = (r['status'] as String? ?? '').toLowerCase();
-      return st != 'approved' && st != 'rejected' && st != 'denied';
+      final hasDocs = r['has_documents'] == true || (r['submitted_documents'] as List? ?? []).isNotEmpty;
+      return st != 'approved' && st != 'rejected' && st != 'denied' && hasDocs;
     }).length ?? 0;
 
     final upcomingCount = upcomingAsync.value?.length ?? 0;

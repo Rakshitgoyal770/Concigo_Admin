@@ -221,12 +221,19 @@ class PmsSyncService {
 
     final checkInStr = res.checkInDate.toIso8601String().split('T')[0];
     final checkOutStr = res.checkOutDate.toIso8601String().split('T')[0];
-    // Fix 1.3: Prevent PMS status discrepancies from hiding arrivals.
-    // Default to 'Upcoming' so reception can see and activate the stay,
-    // unless PMS explicitly states Canceled or CheckedOut ('Ended').
-    String stayStatus = (res.status == 'Canceled' || res.status == 'CheckedOut')
-        ? 'Ended'
-        : 'Upcoming';
+
+    // Accurate status mapping from PMS:
+    // - InHouse -> 'Active' (currently in hotel, occupies room, appears in Checkout view)
+    // - Confirmed -> 'Upcoming' (scheduled arrival, appears in Arrivals view)
+    // - Canceled / CheckedOut -> 'Ended'
+    String stayStatus;
+    if (res.status == 'Canceled' || res.status == 'CheckedOut') {
+      stayStatus = 'Ended';
+    } else if (res.status == 'InHouse') {
+      stayStatus = 'Active';
+    } else {
+      stayStatus = 'Upcoming';
+    }
 
     final pmsTag = 'PMS:${res.pmsReservationId}';
 
@@ -261,6 +268,24 @@ class PmsSyncService {
 
     // 2. If not already identified by PMS ID, check if an active stay exists for this guest & dates
     if (stayId == null) {
+      // First check if a stay for this guest and dates was ALREADY Ended (checked out).
+      // If yes, do NOT resurrect it!
+      if (guestUserId != null) {
+        final endedList = await _client
+            .from('stay')
+            .select('stay_id')
+            .eq('hotel_id', propertyId)
+            .eq('main_user_id', guestUserId)
+            .eq('check_in_date', checkInStr)
+            .eq('status', 'Ended')
+            .limit(1) as List;
+
+        if (endedList.isNotEmpty) {
+          debugPrint('[PmsSyncService] Stay for guest $guestUserId on $checkInStr was already checked out (Ended). Skipping resurrection.');
+          return;
+        }
+      }
+
       var query = _client
           .from('stay')
           .select('stay_id, status')
@@ -278,6 +303,38 @@ class PmsSyncService {
       }
     }
 
+    // ISSUE-15: Check if a manually created stay (MANUAL: tag) already exists for
+    // the same guest and check-in date. If yes, link PMS tag to it instead of creating
+    // a duplicate stay. This prevents race condition between manual desk booking & PMS sync.
+    if (stayId == null && guestUserId != null) {
+      try {
+        final manualCrList = await _client
+            .from('checkin_requests')
+            .select('stay_id, remark')
+            .eq('main_user_id', guestUserId)
+            .ilike('remark', 'MANUAL:%')
+            .limit(5) as List;
+
+        for (final cr in manualCrList) {
+          final manualStayId = cr['stay_id']?.toString();
+          if (manualStayId == null) continue;
+          // Verify this manual stay has the same check-in date
+          final matchingStay = await _client
+              .from('stay')
+              .select('stay_id, check_in_date')
+              .eq('stay_id', manualStayId)
+              .eq('check_in_date', checkInStr)
+              .neq('status', 'Ended')
+              .maybeSingle();
+          if (matchingStay != null) {
+            stayId = manualStayId;
+            debugPrint('[PmsSyncService] Linked PMS reservation ${res.pmsReservationId} to existing manual stay $stayId');
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+
     if (stayId != null) {
       final currentStay = await _client
           .from('stay')
@@ -292,10 +349,11 @@ class PmsSyncService {
         stayStatus = 'Active';
       }
 
-      // Update dates & status
+      // Update dates & status & heal guestUserId if needed
       await _client.from('stay').update({
         'check_out_date': checkOutStr,
         'status': stayStatus,
+        if (guestUserId != null) 'main_user_id': guestUserId,
       }).eq('stay_id', stayId);
 
       // If stay ended (checked out in PMS), release assigned room(s)
@@ -340,7 +398,9 @@ class PmsSyncService {
       }
     }
 
-    // Ensure PMS reservation ID is recorded on checkin_requests for 2-way tracking
+    // Ensure PMS reservation ID is recorded on checkin_requests for 2-way tracking.
+    // BUG-6: Always create/update a checkin_request even when user resolution failed,
+    // so the PMS tag is never lost and resurrection prevention always works.
     if (res.pmsReservationId.isNotEmpty) {
       try {
         final existingCr = await _client
@@ -353,14 +413,24 @@ class PmsSyncService {
           await _client.from('checkin_requests').update({
             'remark': pmsTag,
           }).eq('id', existingCr.first['id']);
-        } else if (guestUserId != null) {
-          await _client.from('checkin_requests').insert({
-            'stay_id': stayId,
-            'main_user_id': guestUserId,
-            'status': 'pending',
-            'remark': pmsTag,
-            'submitted_req': [],
-          });
+        } else {
+          // Always insert — resolve main_user_id from stay if guestUserId is null
+          var effectiveUserId = guestUserId;
+          if (effectiveUserId == null) {
+            final stayRow = await _client.from('stay').select('main_user_id').eq('stay_id', stayId).maybeSingle();
+            effectiveUserId = stayRow?['main_user_id']?.toString();
+          }
+          if (effectiveUserId != null && effectiveUserId.isNotEmpty) {
+            final code = (1000 + (DateTime.now().millisecondsSinceEpoch % 9000)).toString();
+            await _client.from('checkin_requests').insert({
+              'stay_id': stayId,
+              'main_user_id': effectiveUserId,
+              'status': stayStatus == 'Active' ? 'approved' : 'pending',
+              'checkin_code': code,
+              'remark': pmsTag,
+              'submitted_req': [],
+            });
+          }
         }
       } catch (_) {}
     }
@@ -372,61 +442,100 @@ class PmsSyncService {
         stayId: stayId,
         roomNumber: res.assignedRoomNumber!,
         category: res.roomCategory,
+        isStayActive: stayStatus == 'Active',
       );
     }
   }
 
-  /// Resolves an existing user by phone/email or creates a lightweight guest account.
+  /// Resolves an existing active user by phone/email or creates a lightweight guest account.
+  /// Edge case handling:
+  /// - Multiple entries per phone: Prioritizes active, non-deleted accounts (latest created first).
+  /// - Stale/deleted accounts: Ignored so reservations are never attached to deactivated profiles.
+  /// - Missing email: Enriches active user with email from PMS if empty.
   Future<String?> _resolveOrCreateGuestUser(CanonicalGuest guest) async {
     try {
       final rawPhone = guest.phone.trim();
       final phone = rawPhone.replaceAll(RegExp(r'[\s\-()]'), '');
-      final last10 = phone.length >= 10 ? phone.substring(phone.length - 10) : phone;
       final email = guest.email.trim();
       final incomingName = guest.fullName.trim();
 
       if (phone.isNotEmpty) {
+        // ISSUE-10: Normalize to E.164 before matching to prevent last-10-digit
+        // collisions between different country codes (e.g. +1-9518 vs +91-9518).
+        final normalized = _normalizeToE164(phone);
+        final last10 = phone.length >= 10 ? phone.substring(phone.length - 10) : phone;
+
+        // 1. Look for ACTIVE, non-deleted user with exact normalized phone (latest first)
         var existingByPhone = await _client
             .from('users')
-            .select('user_id')
-            .eq('mobile_no', phone)
+            .select('user_id, name, email')
+            .eq('mobile_no', normalized)
+            .eq('status', 'active')
+            .isFilter('deleted_at', null)
+            .order('created_at', ascending: false)
             .limit(1);
 
+        // 2. Fallback to last 10 digits (active, non-deleted, latest first)
         if ((existingByPhone as List).isEmpty && last10.isNotEmpty) {
           existingByPhone = await _client
               .from('users')
-              .select('user_id')
+              .select('user_id, name, email')
               .ilike('mobile_no', '%$last10')
+              .eq('status', 'active')
+              .isFilter('deleted_at', null)
+              .order('created_at', ascending: false)
               .limit(1);
         }
 
         if ((existingByPhone as List).isNotEmpty) {
           final userId = existingByPhone.first['user_id'] as String;
-          // Fix 1.2: If incoming guest name is provided, update user record so desk displays it
-          if (incomingName.isNotEmpty && incomingName != 'Guest') {
+          final existingName = (existingByPhone.first['name'] as String? ?? '').trim();
+          final existingEmail = (existingByPhone.first['email'] as String? ?? '').trim();
+
+          // BUG-5: Only update name if the stored name is empty or a placeholder.
+          // Never overwrite a real name that may have been corrected by a receptionist.
+          final isPlaceholder = existingName.isEmpty ||
+              existingName.toLowerCase() == 'guest' ||
+              existingName.startsWith('Guest (');
+
+          final updateFields = <String, dynamic>{};
+          if (isPlaceholder && incomingName.isNotEmpty && incomingName != 'Guest') {
+            updateFields['name'] = incomingName;
+            if (guest.firstName.isNotEmpty) updateFields['first_name'] = guest.firstName;
+            if (guest.lastName.isNotEmpty) updateFields['last_name'] = guest.lastName;
+          }
+          if (existingEmail.isEmpty && email.isNotEmpty) {
+            updateFields['email'] = email;
+          }
+
+          if (updateFields.isNotEmpty) {
             try {
-              await _client.from('users').update({
-                'name': incomingName,
-                if (guest.firstName.isNotEmpty) 'first_name': guest.firstName,
-                if (guest.lastName.isNotEmpty) 'last_name': guest.lastName,
-                if (email.isNotEmpty) 'email': email,
-              }).eq('user_id', userId);
+              await _client.from('users').update(updateFields).eq('user_id', userId);
             } catch (_) {}
           }
           return userId;
         }
       }
 
+      // 3. Fallback: Search by email (active, non-deleted, latest first)
       if (email.isNotEmpty) {
         final existingByEmail = await _client
             .from('users')
-            .select('user_id')
+            .select('user_id, name, email')
             .eq('email', email)
+            .eq('status', 'active')
+            .isFilter('deleted_at', null)
+            .order('created_at', ascending: false)
             .limit(1);
 
         if ((existingByEmail as List).isNotEmpty) {
           final userId = existingByEmail.first['user_id'] as String;
-          if (incomingName.isNotEmpty && incomingName != 'Guest') {
+          final existingName = (existingByEmail.first['name'] as String? ?? '').trim();
+          final isPlaceholder = existingName.isEmpty ||
+              existingName.toLowerCase() == 'guest' ||
+              existingName.startsWith('Guest (');
+
+          if (isPlaceholder && incomingName.isNotEmpty && incomingName != 'Guest') {
             try {
               await _client.from('users').update({
                 'name': incomingName,
@@ -439,12 +548,14 @@ class PmsSyncService {
         }
       }
 
-      // Create new lightweight guest profile
+      // 4. Create new lightweight guest profile (active)
+      final fallbackPhone = '+9199${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}';
+      final normalizedPhone = phone.isNotEmpty ? _normalizeToE164(phone) : fallbackPhone;
       final insertUser = await _client
           .from('users')
           .insert({
             'name': guest.fullName.isNotEmpty ? guest.fullName : 'Guest',
-            'mobile_no': phone.isNotEmpty ? phone : '+910000000000',
+            'mobile_no': normalizedPhone,
             'email': email.isNotEmpty ? email : null,
             'status': 'active',
           })
@@ -457,12 +568,26 @@ class PmsSyncService {
     }
   }
 
+  /// Normalizes a phone number to E.164 format to avoid last-10-digit collisions.
+  String _normalizeToE164(String raw) {
+    final stripped = raw.replaceAll(RegExp(r'[\s\-()]'), '');
+    if (stripped.startsWith('+')) return stripped;
+    // If 10 digits and no country code, assume India (+91)
+    final digits = stripped.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length == 10) return '+91$digits';
+    if (digits.length == 12 && digits.startsWith('91')) return '+$digits';
+    return stripped; // fallback: return as-is
+  }
+
   /// Ensures physical room exists and attaches to `stay_rooms`.
+  /// BUG-4: If a room assignment changes in PMS, remove the old stay_rooms entry
+  /// and release the old room before linking the new one.
   Future<void> _linkStayRoom({
     required String propertyId,
     required String stayId,
     required String roomNumber,
     required String category,
+    bool isStayActive = false,
   }) async {
     try {
       // Find room in hotel inventory
@@ -485,11 +610,35 @@ class PmsSyncService {
               'room_number': roomNumber,
               'type': category,
               'is_active': true,
+              'is_booked': isStayActive,
             })
             .select('room_id')
             .single();
 
         roomId = newRoom['room_id'] as String;
+      }
+
+      // BUG-4: Detect and clean up stale room assignments.
+      // If the PMS assigned a different room, release the old one.
+      final existingStayRooms = await _client
+          .from('stay_rooms')
+          .select('id, room_id')
+          .eq('stay_id', stayId) as List;
+
+      for (final existingEntry in existingStayRooms) {
+        final existingRoomId = existingEntry['room_id']?.toString();
+        if (existingRoomId != null && existingRoomId != roomId) {
+          // Room has changed in PMS — remove stale assignment and free old room
+          await _client
+              .from('stay_rooms')
+              .delete()
+              .eq('id', existingEntry['id']);
+          await _client
+              .from('rooms')
+              .update({'is_booked': false})
+              .eq('room_id', existingRoomId);
+          debugPrint('[PmsSyncService] Stale room $existingRoomId removed from stay $stayId (replaced by $roomId)');
+        }
       }
 
       // Attach to stay_rooms if not already attached
@@ -505,6 +654,14 @@ class PmsSyncService {
           'stay_id': stayId,
           'room_id': roomId,
         });
+      }
+
+      // If stay is Active (InHouse), ensure the room is marked as booked/occupied
+      if (isStayActive) {
+        await _client
+            .from('rooms')
+            .update({'is_booked': true})
+            .eq('room_id', roomId);
       }
     } catch (e) {
       debugPrint('[PmsSyncService] Room link error: $e');

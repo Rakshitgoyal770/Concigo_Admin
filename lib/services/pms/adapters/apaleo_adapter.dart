@@ -18,11 +18,16 @@ class ApaleoAdapter implements PmsAdapter {
     DateTime? to,
     List<String>? statuses,
   }) async {
+    // Fetch all live/upcoming reservation statuses. 'Reserved' is included so
+    // new bookings sync immediately after creation in Apaleo.
+    // 'CheckedOut' and 'NoShow' are intentionally excluded — processing historical
+    // records every 30s causes unnecessary DB load, and the resurrection-prevention
+    // logic handles Apaleo→Concigo status drift correctly.
     final rawList = await _service.fetchReservations(
       propertyId: propertyCode,
       from: from,
       to: to,
-      statuses: statuses ?? ['Confirmed', 'InHouse', 'CheckedOut'],
+      statuses: statuses ?? ['Confirmed', 'InHouse', 'Reserved'],
     );
 
     return rawList.map((r) => _mapToCanonical(r, propertyCode)).toList();

@@ -137,7 +137,10 @@ class LiveDeskKpis {
   final int cleaningRooms;
   final int maintenanceRooms;
   final int expectedArrivals;
+  final int todayArrivals;
+  final int overdueArrivals;
   final int activeStays;
+  final int dueDepartures;
   final int pendingKYC;
   final int pendingLuggage;
 
@@ -148,7 +151,10 @@ class LiveDeskKpis {
     this.cleaningRooms = 0,
     this.maintenanceRooms = 0,
     this.expectedArrivals = 0,
+    this.todayArrivals = 0,
+    this.overdueArrivals = 0,
     this.activeStays = 0,
+    this.dueDepartures = 0,
     this.pendingKYC = 0,
     this.pendingLuggage = 0,
   });
@@ -189,9 +195,46 @@ final liveDeskKpiProvider = Provider<LiveDeskKpis>((ref) {
     }
   }
 
+  // Calculate Today Arrivals vs Overdue Arrivals vs Future
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+
+  int todayArrivalsCount = 0;
+  int overdueArrivalsCount = 0;
+  for (final u in upcoming) {
+    final dStr = u['check_in_date']?.toString();
+    if (dStr != null) {
+      final dt = DateTime.tryParse(dStr.split('T')[0]);
+      if (dt != null) {
+        final d = DateTime(dt.year, dt.month, dt.day);
+        if (d.isBefore(today)) {
+          overdueArrivalsCount++;
+        } else if (d.year == today.year && d.month == today.month && d.day == today.day) {
+          todayArrivalsCount++;
+        }
+      }
+    }
+  }
+
+  // Calculate Due Departures (in-house active stays checking out today or earlier)
+  int dueDeparturesCount = 0;
+  for (final a in active) {
+    final dStr = a['check_out_date']?.toString();
+    if (dStr != null) {
+      final dt = DateTime.tryParse(dStr.split('T')[0]);
+      if (dt != null) {
+        final d = DateTime(dt.year, dt.month, dt.day);
+        if (d.isBefore(today) || (d.year == today.year && d.month == today.month && d.day == today.day)) {
+          dueDeparturesCount++;
+        }
+      }
+    }
+  }
+
   final pendingKycCount = kyc.where((k) {
     final st = (k['status'] as String? ?? '').toLowerCase();
-    return st != 'approved' && st != 'rejected' && st != 'denied';
+    final hasDocs = k['has_documents'] == true || (k['submitted_documents'] as List? ?? []).isNotEmpty;
+    return st != 'approved' && st != 'rejected' && st != 'denied' && hasDocs;
   }).length;
 
   final pendingLuggageCount = luggage.where((l) {
@@ -205,8 +248,11 @@ final liveDeskKpiProvider = Provider<LiveDeskKpis>((ref) {
     vacantRooms: vacant,
     cleaningRooms: cleaning,
     maintenanceRooms: maintenance,
-    expectedArrivals: upcoming.length,
+    expectedArrivals: todayArrivalsCount + overdueArrivalsCount,
+    todayArrivals: todayArrivalsCount,
+    overdueArrivals: overdueArrivalsCount,
     activeStays: active.length,
+    dueDepartures: dueDeparturesCount,
     pendingKYC: pendingKycCount,
     pendingLuggage: pendingLuggageCount,
   );

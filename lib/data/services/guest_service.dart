@@ -156,6 +156,12 @@ class GuestService {
           }
         }
 
+        // Only include in KYC Verification Queue if guest has ACTUALLY uploaded documents/photos for review.
+        // Guests who have not done digital check-in remain in "Upcoming Arrivals & Bookings".
+        if (!hasRealDocs) {
+          return null;
+        }
+
         return {
           ...req,
           'request_id': req['id'],
@@ -171,7 +177,9 @@ class GuestService {
           'check_in_date': stay?['check_in_date'],
           'check_out_date': stay?['check_out_date'],
         };
-      }).toList();
+      })
+      .whereType<Map<String, dynamic>>()
+      .toList();
     } catch (e) {
       return [];
     }
@@ -186,11 +194,27 @@ class GuestService {
     if (requestId.isNotEmpty) {
       final normStatus = status.toLowerCase();
       try {
-        await _supabaseService.client.from('checkin_requests').update({
+        final updateData = <String, dynamic>{
           'status': normStatus,
-          'remark': rejectionReason,
           'updated_at': DateTime.now().toIso8601String(),
-        }).eq('id', requestId);
+        };
+        if (rejectionReason != null && rejectionReason.trim().isNotEmpty) {
+          final existing = await _supabaseService.client
+              .from('checkin_requests')
+              .select('remark')
+              .eq('id', requestId)
+              .maybeSingle();
+          final currentRemark = existing?['remark']?.toString() ?? '';
+          if (currentRemark.startsWith('PMS:')) {
+            updateData['remark'] = '$currentRemark | REJECTED: ${rejectionReason.trim()}';
+          } else {
+            updateData['remark'] = rejectionReason.trim();
+          }
+        }
+        await _supabaseService.client
+            .from('checkin_requests')
+            .update(updateData)
+            .eq('id', requestId);
       } catch (_) {}
     }
   }

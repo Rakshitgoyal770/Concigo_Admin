@@ -39,27 +39,56 @@ class _InstantCheckoutModalState extends ConsumerState<InstantCheckoutModal> {
       final stayService = ref.read(stayServiceProvider);
       final roomService = ref.read(roomServiceProvider);
 
-      // 1. Checkout Stay
-      await stayService.checkoutStay(stayId: stayId, roomId: roomId);
+      // 1. Checkout Stay — now returns CheckoutResult (ISSUE-16)
+      final result = await stayService.checkoutStay(stayId: stayId, roomId: roomId);
 
-      // 2. Set Room to Needs Cleaning if requested and room is assigned
-      if (_markHousekeeping &&
-          roomId.isNotEmpty &&
-          roomId != 'null' &&
-          roomId != 'N/A') {
-        await roomService.updateRoomStatus(roomId, 'cleaning');
+      // 2. Set all assigned rooms to Needs Cleaning if requested
+      if (_markHousekeeping) {
+        final roomsToClean = <String>{};
+        if (roomId.isNotEmpty && roomId != 'null' && roomId != 'N/A') {
+          roomsToClean.add(roomId);
+        }
+        final stayRooms = widget.stay['stay_rooms'] as List?;
+        if (stayRooms != null) {
+          for (final sr in stayRooms) {
+            final rid = (sr is Map ? sr['room_id'] : null)?.toString().trim();
+            if (rid != null && rid.isNotEmpty && rid != 'null' && rid != 'N/A') {
+              roomsToClean.add(rid);
+            }
+          }
+        }
+        for (final r in roomsToClean) {
+          try {
+            await roomService.updateRoomStatus(r, 'cleaning');
+          } catch (_) {}
+        }
       }
 
       ref.read(receptionRefreshSignalProvider.notifier).state++;
 
       if (mounted) {
         Navigator.of(context).pop(true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.success,
-            content: Text('Stay for $guestName (Room $roomNum) successfully checked out!'),
-          ),
-        );
+
+        // Show PMS warning if sync failed
+        if (!result.pmsSynced && result.pmsWarning != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.orange.shade700,
+              duration: const Duration(seconds: 8),
+              content: Text(
+                '⚠️ ${result.pmsWarning}',
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: AppColors.success,
+              content: Text('Stay for $guestName (Room $roomNum) successfully checked out!'),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) setState(() => _errorMessage = 'Checkout failed: $e');

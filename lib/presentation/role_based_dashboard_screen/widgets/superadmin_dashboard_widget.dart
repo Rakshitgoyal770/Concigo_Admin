@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -7,6 +8,7 @@ import '../../../widgets/empty_state_widget.dart';
 import '../../../widgets/loading_skeleton_widget.dart';
 import '../../../widgets/status_badge_widget.dart';
 import '../../../services/supabase_service.dart';
+import '../../../data/services/stay_service.dart';
 import './dashboard_app_bar_widget.dart';
 
 class SuperAdminDashboardWidget extends StatefulWidget {
@@ -60,6 +62,8 @@ class _SuperAdminDashboardWidgetState extends State<SuperAdminDashboardWidget>
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
 
+  Timer? _periodicRefreshTimer;
+
   @override
   void initState() {
     super.initState();
@@ -81,9 +85,18 @@ class _SuperAdminDashboardWidgetState extends State<SuperAdminDashboardWidget>
       ),
     );
     _loadData();
+    // Auto-refresh SuperAdmin metrics & stays every 30 seconds
+    _periodicRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) {
+        _loadData(silent: true);
+      }
+    });
   }
 
-  Future<void> _loadData() async {
+  Future<void> _loadData({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _isLoading = true);
+    }
     try {
       final results = await Future.wait([
         SupabaseService.instance.fetchEmployees(widget.propertyId),
@@ -119,18 +132,19 @@ class _SuperAdminDashboardWidgetState extends State<SuperAdminDashboardWidget>
           _emailController.text = (_propertyData['email'] as String?) ?? '';
           _isLoading = false;
         });
-        _entranceController.forward();
+        if (!silent) _entranceController.forward();
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        _entranceController.forward();
+        if (!silent) _entranceController.forward();
       }
     }
   }
 
   @override
   void dispose() {
+    _periodicRefreshTimer?.cancel();
     _entranceController.dispose();
     _employeeSearchController.dispose();
     _nameController.dispose();
@@ -3470,8 +3484,18 @@ class _SuperAdminDashboardWidgetState extends State<SuperAdminDashboardWidget>
             onPressed: () async {
               Navigator.pop(ctx);
               try {
-                await SupabaseService.instance.checkoutStay(stayId, roomIds);
-                Fluttertoast.showToast(msg: 'Guest checked out successfully');
+                // BUG-1 fix: Route through StayService so the 2-way Apaleo checkout
+                // is triggered. Bypassing this caused guests to resurrect on next sync.
+                final roomId = roomIds.isNotEmpty ? roomIds.first : null;
+                final result = await StayService().checkoutStay(stayId: stayId, roomId: roomId);
+                if (!result.pmsSynced && result.pmsWarning != null) {
+                  Fluttertoast.showToast(
+                    msg: '⚠️ Checked out locally. ${result.pmsWarning}',
+                    toastLength: Toast.LENGTH_LONG,
+                  );
+                } else {
+                  Fluttertoast.showToast(msg: 'Guest checked out successfully');
+                }
                 await _reloadStays();
               } catch (e) {
                 Fluttertoast.showToast(

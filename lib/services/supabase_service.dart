@@ -457,7 +457,7 @@ class SupabaseService {
       final response = await client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), early_late_offer_accepts(type, time_selected)',
+            'stay_id, check_in_date, check_out_date, status, main_user_id, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), checkin_requests(remark), early_late_offer_accepts(type, time_selected)',
           )
           .eq('hotel_id', propertyId)
           .eq('status', 'Active')
@@ -709,7 +709,7 @@ class SupabaseService {
             'stay_id, check_in_date, check_out_date, status, main_user_id, '
             'users(name, mobile_no), '
             'stay_rooms(room_id, rooms(room_number)), '
-            'checkin_requests(id, status, checkin_code)',
+            'checkin_requests(id, status, checkin_code, remark)',
           )
           .eq('hotel_id', propertyId)
           .eq('status', 'Upcoming')
@@ -754,10 +754,13 @@ class SupabaseService {
           map['kyc_status'] = crStatus;
           map['is_kyc_verified'] = crStatus == 'APPROVED';
           map['checkin_code'] = cr['checkin_code'] as String?;
+          // ISSUE-17: Propagate remark so UI can derive booking source label
+          map['remark'] = cr['remark'] as String?;
         } else {
           map['checkin_request_id'] = null;
           map['kyc_status'] = 'PENDING';
           map['is_kyc_verified'] = false;
+          map['remark'] = null;
         }
 
         results.add(map);
@@ -1072,7 +1075,7 @@ class SupabaseService {
     }
   }
 
-  /// Checkout: mark stay as Ended, release rooms
+  /// Checkout: mark stay as Ended, close stay_guests, and release all assigned rooms
   Future<void> checkoutStay(String stayId, List<String> roomIds) async {
     try {
       await client
@@ -1083,14 +1086,38 @@ class SupabaseService {
           })
           .eq('stay_id', stayId);
 
-      // Release all valid assigned rooms
-      final validRoomIds = roomIds
-          .where((rid) => rid.trim().isNotEmpty && rid != 'null' && rid != 'N/A')
-          .toList();
+      // Close all stay_guests records for this stay
+      try {
+        await client
+            .from('stay_guests')
+            .update({
+              'status': 'Ended',
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .eq('stay_id', stayId);
+      } catch (_) {}
 
-      if (validRoomIds.isNotEmpty) {
+      // Discover all room IDs assigned to this stay from stay_rooms
+      final allRoomIds = roomIds
+          .where((rid) => rid.trim().isNotEmpty && rid != 'null' && rid != 'N/A')
+          .toSet();
+
+      try {
+        final srRows = await client
+            .from('stay_rooms')
+            .select('room_id')
+            .eq('stay_id', stayId);
+        for (final row in (srRows as List)) {
+          final rid = row['room_id']?.toString().trim();
+          if (rid != null && rid.isNotEmpty && rid != 'null' && rid != 'N/A') {
+            allRoomIds.add(rid);
+          }
+        }
+      } catch (_) {}
+
+      if (allRoomIds.isNotEmpty) {
         await Future.wait(
-          validRoomIds.map((rid) => updateRoomBookingStatus(rid, false)),
+          allRoomIds.map((rid) => updateRoomBookingStatus(rid, false)),
         );
       }
     } on PostgrestException catch (e) {

@@ -7,6 +7,10 @@ import '../../../../core/widgets/luxury_card.dart';
 import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../core/widgets/luxury_button.dart';
 import '../../../../data/providers/reception_providers.dart';
+import 'dart:async';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../../core/widgets/live_heartbeat_badge.dart';
+import '../../../../services/supabase_service.dart';
 import 'kyc_inspector_modal.dart';
 
 class KycQueueTab extends ConsumerStatefulWidget {
@@ -17,9 +21,79 @@ class KycQueueTab extends ConsumerStatefulWidget {
 }
 
 class _KycQueueTabState extends ConsumerState<KycQueueTab> {
+  Timer? _heartbeatTimer;
+  DateTime _lastPulseTime = DateTime.now();
+  bool _isSyncing = false;
+  RealtimeChannel? _realtimeChannel;
+
+  @override
+  void initState() {
+    super.initState();
+    // 1. Periodic Heartbeat: Silently checks queue every 10 seconds
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _pulseHeartbeat(silent: true);
+    });
+
+    // 2. Realtime WebSocket: Instantly refreshes on checkin_requests INSERT / UPDATE
+    _subscribeToRealtime();
+  }
+
+  void _subscribeToRealtime() {
+    try {
+      _realtimeChannel = SupabaseService.instance.client
+          .channel('kyc_queue_live_heartbeat_${DateTime.now().millisecondsSinceEpoch}')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'checkin_requests',
+            callback: (payload) {
+              debugPrint('⚡ [KYC Queue Heartbeat] Realtime change detected: ${payload.eventType}');
+              _pulseHeartbeat(silent: true);
+            },
+          )
+          .subscribe();
+    } catch (e) {
+      debugPrint('⚠️ [KYC Queue Heartbeat] Realtime subscription error: $e');
+    }
+  }
+
+  void _unsubscribeRealtime() {
+    try {
+      if (_realtimeChannel != null) {
+        SupabaseService.instance.client.removeChannel(_realtimeChannel!);
+        _realtimeChannel = null;
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _pulseHeartbeat({bool silent = false}) async {
+    if (_isSyncing) return;
+    if (!silent && mounted) setState(() => _isSyncing = true);
+    _lastPulseTime = DateTime.now();
+
+    // Invalidate checkinRequestsProvider to trigger a fresh background query
+    ref.invalidate(checkinRequestsProvider);
+
+    if (mounted) {
+      setState(() => _isSyncing = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _heartbeatTimer?.cancel();
+    _unsubscribeRealtime();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final kycRequestsAsync = ref.watch(checkinRequestsProvider);
+    final activeRequests = (kycRequestsAsync.asData?.value ?? []).where((r) {
+      final st = (r['status'] as String? ?? '').trim().toLowerCase();
+      final hasDocs = r['has_documents'] == true || (r['submitted_documents'] as List? ?? []).isNotEmpty;
+      return st != 'approved' && st != 'rejected' && st != 'denied' && hasDocs;
+    }).toList();
 
     return LuxuryCard(
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -59,11 +133,27 @@ class _KycQueueTabState extends ConsumerState<KycQueueTab> {
                   ],
                 ),
               ),
-              if (kycRequestsAsync.asData?.value.isNotEmpty == true)
-                LuxuryBadge(
-                  label: '${kycRequestsAsync.asData!.value.length} Pending',
-                  variant: LuxuryBadgeVariant.attention,
-                ),
+              const SizedBox(width: 12),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Live Heartbeat Radar & Status Badge
+                  LiveHeartbeatBadge(
+                    lastPulseTime: _lastPulseTime,
+                    isSyncing: _isSyncing,
+                    intervalSeconds: 10,
+                    label: 'LIVE QUEUE',
+                    onTap: () => _pulseHeartbeat(silent: false),
+                  ),
+                  if (activeRequests.isNotEmpty) ...[
+                    AppSpacing.gapH8,
+                    LuxuryBadge(
+                      label: '${activeRequests.length} Pending',
+                      variant: LuxuryBadgeVariant.attention,
+                    ),
+                  ],
+                ],
+              ),
             ],
           ),
           AppSpacing.gapV16,
@@ -73,7 +163,8 @@ class _KycQueueTabState extends ConsumerState<KycQueueTab> {
             data: (requests) {
               final pendingRequests = requests.where((r) {
                 final st = (r['status'] as String? ?? '').trim().toLowerCase();
-                return st != 'approved' && st != 'rejected' && st != 'denied';
+                final hasDocs = r['has_documents'] == true || (r['submitted_documents'] as List? ?? []).isNotEmpty;
+                return st != 'approved' && st != 'rejected' && st != 'denied' && hasDocs;
               }).toList();
 
               if (pendingRequests.isEmpty) {

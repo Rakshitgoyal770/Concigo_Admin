@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import './services/supabase_service.dart';
+import './services/pms/apaleo_service.dart';
 import './widgets/custom_error_widget.dart';
 import 'core/app_export.dart';
 
@@ -14,6 +15,13 @@ void main() async {
     await SupabaseService.initialize();
   } catch (e) {
     debugPrint('Failed to initialize Supabase: $e');
+  }
+
+  // Initialize ApaleoService — loads tokens from local storage or Supabase pms_tokens table
+  try {
+    await ApaleoService.instance.init();
+  } catch (e) {
+    debugPrint('[main] ApaleoService.init error (non-fatal): $e');
   }
 
   bool hasShownError = false;

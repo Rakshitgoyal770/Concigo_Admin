@@ -8,11 +8,13 @@ import '../../../../data/providers/reception_providers.dart';
 import '../../../../routes/app_routes.dart';
 import '../../../../services/supabase_service.dart';
 import '../../../../services/pms/pms_sync_service.dart';
+import '../../../../services/pms/apaleo_service.dart';
 import '../live_desk/live_front_desk_view.dart';
 import '../arrivals_checkin/arrivals_checkin_view.dart';
 import '../upsells_offers/upsells_offers_view.dart';
 import '../billing_departure/billing_departure_view.dart';
 import '../walk_in/instant_walk_in_dialog.dart';
+import 'apaleo_connect_dialog.dart';
 
 class ReceptionShell extends ConsumerStatefulWidget {
   final String employeeName;
@@ -34,10 +36,13 @@ class ReceptionShell extends ConsumerStatefulWidget {
 
 class _ReceptionShellState extends ConsumerState<ReceptionShell> {
   int _currentHubIndex = 0;
+  bool _showAuthErrorBanner = false;
 
   @override
   void initState() {
     super.initState();
+    // Listen for auth token errors and surface them in the UI
+    ApaleoService.tokenExpiredNotifier.addListener(_onTokenStateChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.propertyId.isNotEmpty) {
         ref.read(activePropertyIdProvider.notifier).state = widget.propertyId;
@@ -55,8 +60,17 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
     });
   }
 
+  void _onTokenStateChanged() {
+    if (mounted) {
+      setState(() {
+        _showAuthErrorBanner = ApaleoService.tokenExpiredNotifier.value;
+      });
+    }
+  }
+
   @override
   void dispose() {
+    ApaleoService.tokenExpiredNotifier.removeListener(_onTokenStateChanged);
     PmsSyncService.instance.stopPeriodicSync();
     super.dispose();
   }
@@ -132,6 +146,60 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
+      // ── AUTH ERROR BANNER ───────────────────────────────────────────────────────
+      // Shows when Apaleo token refresh fails. Disappears once reconnected.
+      bottomNavigationBar: _showAuthErrorBanner
+          ? SafeArea(
+              top: false,
+              child: Container(
+                color: const Color(0xFFB91C1C),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        ApaleoService.tokenErrorMessage.value ??
+                            'Apaleo connection lost. Sync paused.',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () {
+                        showDialog(
+                          context: context,
+                          builder: (_) => const ApaleoConnectDialog(),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'Reconnect Now',
+                          style: TextStyle(
+                            color: Color(0xFFB91C1C),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : null,
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isMobile = constraints.maxWidth < 720;
@@ -154,163 +222,152 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                   child: Row(
                     children: [
                       // Hotel Workstation Brand Identity
-                      Row(
-                        children: [
-                          Container(
-                            width: 34,
-                            height: 34,
-                            decoration: BoxDecoration(
-                              color: AppColors.primary,
-                              borderRadius: AppSpacing.roundedSm,
+                      Expanded(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 34,
+                              height: 34,
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: AppSpacing.roundedSm,
+                              ),
+                              child: const Center(
+                                child: Icon(Icons.hotel_class_rounded, size: 18, color: AppColors.brass),
+                              ),
                             ),
-                            child: const Center(
-                              child: Icon(Icons.hotel_class_rounded, size: 18, color: AppColors.brass),
-                            ),
-                          ),
-                          AppSpacing.gapH12,
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Row(
+                            AppSpacing.gapH12,
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Text(
-                                    widget.propertyName.isNotEmpty ? widget.propertyName.toUpperCase() : 'CONCIGO LUXURY RESORT',
-                                    style: AppTypography.labelLarge.copyWith(
-                                      letterSpacing: 1.1,
-                                      fontWeight: FontWeight.w700,
-                                      color: AppColors.primary,
-                                      fontSize: isMobile ? 12 : 13.5,
-                                    ),
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          widget.propertyName.isNotEmpty ? widget.propertyName.toUpperCase() : 'CONCIGO LUXURY RESORT',
+                                          style: AppTypography.labelLarge.copyWith(
+                                            letterSpacing: 1.1,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppColors.primary,
+                                            fontSize: isMobile ? 12 : 13.5,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                        ),
+                                      ),
+                                      if (constraints.maxWidth >= 860) ...[
+                                        AppSpacing.gapH8,
+                                        Container(
+                                          width: 4,
+                                          height: 4,
+                                          decoration: const BoxDecoration(
+                                            color: AppColors.textMuted,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        AppSpacing.gapH8,
+                                        Text(
+                                          'Front Desk Console',
+                                          style: AppTypography.caption.copyWith(
+                                            color: AppColors.textSecondary,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ],
                                   ),
-                                  if (!isMobile) ...[
-                                    AppSpacing.gapH8,
-                                    Container(
-                                      width: 4,
-                                      height: 4,
-                                      decoration: const BoxDecoration(
-                                        color: AppColors.textMuted,
-                                        shape: BoxShape.circle,
-                                      ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    todayFormatted,
+                                    style: AppTypography.caption.copyWith(
+                                      color: AppColors.textSecondary,
+                                      fontSize: isMobile ? 10.5 : 11.5,
                                     ),
-                                    AppSpacing.gapH8,
-                                    Text(
-                                      'Front Desk Console',
-                                      style: AppTypography.caption.copyWith(
-                                        color: AppColors.textSecondary,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  ),
                                 ],
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                todayFormatted,
-                                style: AppTypography.caption.copyWith(
-                                  color: AppColors.textSecondary,
-                                  fontSize: isMobile ? 10.5 : 11.5,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-
-                      const Spacer(),
-
-                      if (!isMobile) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: AppColors.successLight,
-                            borderRadius: AppSpacing.roundedFull,
-                            border: Border.all(color: AppColors.successBorder, width: 0.8),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 7,
-                                height: 7,
-                                decoration: const BoxDecoration(
-                                  color: AppColors.success,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              AppSpacing.gapH4,
-                              Text(
-                                'PMS Auto-Sync (30s)',
-                                style: AppTypography.caption.copyWith(
-                                  color: AppColors.success,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                        AppSpacing.gapH8,
-                      ],
-
-                      // Sync / Refresh Trigger
-                      IconButton(
-                        tooltip: 'Synchronize Live Data & PMS Now',
-                        icon: const Icon(Icons.sync_rounded, size: 19, color: AppColors.textSecondary),
-                        onPressed: () async {
-                          if (widget.propertyId.isNotEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Syncing with PMS...'),
-                                duration: Duration(seconds: 1),
-                              ),
-                            );
-                            await PmsSyncService.instance.syncReservations(propertyId: widget.propertyId);
-                          }
-                          ref.read(receptionRefreshSignalProvider.notifier).state++;
-                        },
                       ),
-
-                      if (!isMobile) ...[
-                        AppSpacing.gapH8,
-                        // Desk Agent Profile Pill
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceSubtle,
-                            borderRadius: AppSpacing.roundedSm,
-                            border: Border.all(color: AppColors.border, width: 0.8),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 8,
-                                height: 8,
-                                decoration: const BoxDecoration(
-                                  color: AppColors.success,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              AppSpacing.gapH8,
-                              Text(
-                                widget.employeeName.isNotEmpty ? widget.employeeName : 'Front Desk Agent',
-                                style: AppTypography.labelMedium.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.textPrimary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
 
                       AppSpacing.gapH8,
 
-                      // Logout Trigger
-                      IconButton(
-                        tooltip: 'Logout Front Desk',
-                        icon: const Icon(Icons.logout_rounded, size: 18, color: AppColors.departure),
-                        onPressed: () => _showLogoutDialog(context),
+                      // Actions & PMS Controls
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Apaleo PMS status chip — tap to connect/manage
+                          const ApaleoStatusChip(),
+
+                          // Sync / Refresh Trigger
+                          IconButton(
+                            tooltip: 'Synchronize Live Data & PMS Now',
+                            icon: const Icon(Icons.sync_rounded, size: 19, color: AppColors.textSecondary),
+                            onPressed: () async {
+                              if (widget.propertyId.isNotEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Syncing with PMS...'),
+                                    duration: Duration(seconds: 1),
+                                  ),
+                                );
+                                await PmsSyncService.instance.syncReservations(propertyId: widget.propertyId);
+                              }
+                              ref.read(receptionRefreshSignalProvider.notifier).state++;
+                            },
+                          ),
+
+                          if (constraints.maxWidth >= 920) ...[
+                            AppSpacing.gapH8,
+                            // Desk Agent Profile Pill
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: AppColors.surfaceSubtle,
+                                borderRadius: AppSpacing.roundedSm,
+                                border: Border.all(color: AppColors.border, width: 0.8),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: const BoxDecoration(
+                                      color: AppColors.success,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  AppSpacing.gapH8,
+                                  Text(
+                                    widget.employeeName.isNotEmpty ? widget.employeeName : 'Front Desk Agent',
+                                    style: AppTypography.labelMedium.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+
+                          AppSpacing.gapH8,
+
+                          // Logout Trigger
+                          IconButton(
+                            tooltip: 'Logout Front Desk',
+                            icon: const Icon(Icons.logout_rounded, size: 18, color: AppColors.departure),
+                            onPressed: () => _showLogoutDialog(context),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -333,7 +390,7 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                       _buildHubTab(0, 'Front Desk', Icons.dashboard_outlined, badgeCount: null),
                       _buildHubTab(1, 'Arrivals & Check-In', Icons.flight_land_rounded, badgeCount: kpis.pendingKYC > 0 ? kpis.pendingKYC : null),
                       _buildHubTab(2, 'Upsells & Offers', Icons.local_offer_outlined, badgeCount: null),
-                      _buildHubTab(3, 'Billing & Departure', Icons.receipt_long_outlined, badgeCount: kpis.activeStays > 0 ? kpis.activeStays : null),
+                      _buildHubTab(3, 'Billing & Departure', Icons.receipt_long_outlined, badgeCount: kpis.dueDepartures > 0 ? kpis.dueDepartures : null),
                     ],
                   ),
                 ),

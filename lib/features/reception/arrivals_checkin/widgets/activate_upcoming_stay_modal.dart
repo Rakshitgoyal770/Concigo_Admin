@@ -8,6 +8,7 @@ import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../core/widgets/luxury_text_field.dart';
 import '../../../../data/providers/supabase_providers.dart';
 import '../../../../data/providers/reception_providers.dart';
+import '../../../../services/pms/apaleo_service.dart';
 
 class ActivateUpcomingStayModal extends ConsumerStatefulWidget {
   final Map<String, dynamic> stay;
@@ -199,7 +200,59 @@ class _ActivateUpcomingStayModalState extends ConsumerState<ActivateUpcomingStay
         } catch (_) {}
       }
 
-      // 5. Invalidate Riverpod Reception State
+      // 11. 2-Way Sync: Check-in reservation in Apaleo PMS
+      try {
+        String? pmsResId;
+        final remark = stay['remark']?.toString() ?? '';
+        if (remark.startsWith('PMS:')) {
+          pmsResId = remark.replaceFirst('PMS:', '').trim();
+        } else {
+          final crList = await supabaseService.client
+              .from('checkin_requests')
+              .select('remark')
+              .eq('stay_id', stayId)
+              .order('created_at', ascending: false)
+              .limit(1);
+          if ((crList as List).isNotEmpty) {
+            final r = crList.first['remark']?.toString() ?? '';
+            if (r.startsWith('PMS:')) {
+              pmsResId = r.replaceFirst('PMS:', '').trim();
+            }
+          }
+        }
+
+        if (pmsResId != null && pmsResId.isNotEmpty) {
+          // 1. Assign room in Apaleo first
+          if (_selectedRoomIds.isNotEmpty) {
+            try {
+              final roomRow = await supabaseService.client
+                  .from('rooms')
+                  .select('room_number')
+                  .eq('room_id', _selectedRoomIds.first)
+                  .maybeSingle();
+              final roomNum = roomRow?['room_number']?.toString();
+              if (roomNum != null && roomNum.isNotEmpty) {
+                debugPrint('[ActivateModal] Syncing room assignment to Apaleo for $pmsResId -> Room $roomNum...');
+                await ApaleoService.instance.assignUnitReservation(
+                  reservationId: pmsResId,
+                  roomNumber: roomNum,
+                );
+              }
+            } catch (assignErr) {
+              debugPrint('[ActivateModal] Apaleo assign unit error: $assignErr');
+            }
+          }
+
+          // 2. Check-in reservation in Apaleo
+          debugPrint('[ActivateModal] Syncing check-in to Apaleo for $pmsResId...');
+          await ApaleoService.instance.checkInReservation(pmsResId);
+        }
+      } catch (pmsErr) {
+        debugPrint('[ActivateModal] Apaleo PMS check-in sync error: $pmsErr');
+      }
+
+
+      // 12. Invalidate Riverpod Reception State
       ref.read(receptionRefreshSignalProvider.notifier).state++;
 
       if (mounted) {

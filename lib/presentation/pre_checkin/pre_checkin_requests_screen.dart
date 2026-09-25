@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/widgets/live_heartbeat_badge.dart';
 import '../../services/supabase_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/empty_state_widget.dart';
@@ -33,24 +36,73 @@ class _PreCheckinRequestsScreenState extends State<PreCheckinRequestsScreen>
   // 'approved' tab (was 'accepted')
   List<Map<String, dynamic>> _acceptedList = [];
 
+  Timer? _heartbeatTimer;
+  DateTime _lastPulseTime = DateTime.now();
+  bool _isSyncing = false;
+  RealtimeChannel? _realtimeChannel;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _loadRequests();
+
+    // 1. Periodic Heartbeat every 10 seconds
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _loadRequests(silent: true);
+    });
+
+    // 2. Realtime WebSocket listener
+    _subscribeToRealtime();
+  }
+
+  void _subscribeToRealtime() {
+    try {
+      _realtimeChannel = SupabaseService.instance.client
+          .channel('precheckin_screen_heartbeat_${DateTime.now().millisecondsSinceEpoch}')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'checkin_requests',
+            callback: (payload) {
+              debugPrint('⚡ [PreCheckin Screen Heartbeat] Realtime change: ${payload.eventType}');
+              _loadRequests(silent: true);
+            },
+          )
+          .subscribe();
+    } catch (e) {
+      debugPrint('⚠️ [PreCheckin Screen Heartbeat] Realtime error: $e');
+    }
+  }
+
+  void _unsubscribeRealtime() {
+    try {
+      if (_realtimeChannel != null) {
+        SupabaseService.instance.client.removeChannel(_realtimeChannel!);
+        _realtimeChannel = null;
+      }
+    } catch (_) {}
   }
 
   @override
   void dispose() {
+    _heartbeatTimer?.cancel();
+    _unsubscribeRealtime();
     _tabController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadRequests() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  Future<void> _loadRequests({bool silent = false}) async {
+    if (_isSyncing) return;
+    _isSyncing = true;
+    _lastPulseTime = DateTime.now();
+
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
     try {
       final supabase = SupabaseService.instance.client;
 
@@ -98,8 +150,17 @@ class _PreCheckinRequestsScreenState extends State<PreCheckinRequestsScreen>
       final all = List<Map<String, dynamic>>.from(response);
       if (mounted) {
         setState(() {
-          _requestedList = all.where((r) => r['status'] == 'pending').toList();
-          _acceptedList = all.where((r) => r['status'] == 'approved').toList();
+          // Filter out empty PMS sync placeholders (no submitted guest data)
+          bool hasValidSubmission(Map<String, dynamic> r) {
+            final sub = r['submitted_req'];
+            if (sub is List && sub.isNotEmpty) {
+              return true;
+            }
+            return false;
+          }
+
+          _requestedList = all.where((r) => r['status'] == 'pending' && hasValidSubmission(r)).toList();
+          _acceptedList = all.where((r) => r['status'] == 'approved' && hasValidSubmission(r)).toList();
           _isLoading = false;
         });
       }
@@ -109,6 +170,10 @@ class _PreCheckinRequestsScreenState extends State<PreCheckinRequestsScreen>
           _errorMessage = e.toString().replaceFirst('Exception: ', '');
           _isLoading = false;
         });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
       }
     }
   }
@@ -147,10 +212,17 @@ class _PreCheckinRequestsScreenState extends State<PreCheckinRequestsScreen>
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded, color: AppTheme.onSurface),
-            onPressed: _loadRequests,
-            tooltip: 'Refresh',
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 16.0),
+              child: LiveHeartbeatBadge(
+                lastPulseTime: _lastPulseTime,
+                isSyncing: _isSyncing,
+                intervalSeconds: 10,
+                label: 'LIVE QUEUE',
+                onTap: () => _loadRequests(silent: false),
+              ),
+            ),
           ),
         ],
         bottom: TabBar(

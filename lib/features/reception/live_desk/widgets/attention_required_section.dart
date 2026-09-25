@@ -8,7 +8,6 @@ import '../../../../core/widgets/luxury_button.dart';
 import '../../../../data/providers/reception_providers.dart';
 import '../../arrivals_checkin/widgets/kyc_inspector_modal.dart';
 import '../../arrivals_checkin/widgets/activate_upcoming_stay_modal.dart';
-import '../../billing_departure/widgets/instant_checkout_modal.dart';
 
 class AttentionRequiredSection extends ConsumerWidget {
   final VoidCallback? onNavigateToArrivals;
@@ -25,18 +24,17 @@ class AttentionRequiredSection extends ConsumerWidget {
     final kycRequestsAsync = ref.watch(checkinRequestsProvider);
     final upcomingAsync = ref.watch(upcomingStaysProvider);
     final bellboyAsync = ref.watch(bellboyQueueProvider);
-    final activeStaysAsync = ref.watch(activeStaysProvider);
 
     return kycRequestsAsync.when(
       data: (requests) {
         final pendingKyc = requests.where((r) {
           final s = (r['status'] ?? '').toString().toUpperCase();
-          return s == 'PENDING' || s == 'SUBMITTED' || s == 'REQUESTED';
+          final hasDocs = r['has_documents'] == true || (r['submitted_documents'] as List? ?? []).isNotEmpty;
+          return (s == 'PENDING' || s == 'SUBMITTED' || s == 'REQUESTED') && hasDocs;
         }).toList();
 
         final upcomingList = upcomingAsync.value ?? [];
         final luggageList = bellboyAsync.value ?? [];
-        final activeStays = activeStaysAsync.value ?? [];
 
         // Aggregate urgent operational items
         final List<_OperationalItem> items = [];
