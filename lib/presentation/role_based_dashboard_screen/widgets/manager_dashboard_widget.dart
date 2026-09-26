@@ -62,9 +62,9 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
       duration: const Duration(milliseconds: 600),
     );
     _loadData();
-    // Auto-refresh every 20 seconds in background
+    // Auto-refresh every 60 seconds in background
     _autoRefreshTimer = Timer.periodic(
-      const Duration(seconds: 20),
+      const Duration(seconds: 60),
       (_) => _loadData(isSilent: true),
     );
   }

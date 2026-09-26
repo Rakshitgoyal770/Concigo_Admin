@@ -43,8 +43,8 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
   @override
   void initState() {
     super.initState();
-    // 1. Periodic Heartbeat: Silently refresh arrivals every 10 seconds
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    // 1. Periodic Heartbeat: Fallback refresh arrivals every 60 seconds
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       _pulseHeartbeat(silent: true);
     });
 

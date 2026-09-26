@@ -47,8 +47,8 @@ class _PreCheckinRequestsScreenState extends State<PreCheckinRequestsScreen>
     _tabController = TabController(length: 2, vsync: this);
     _loadRequests();
 
-    // 1. Periodic Heartbeat every 10 seconds
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    // 1. Periodic Heartbeat every 60 seconds
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       _loadRequests(silent: true);
     });
 

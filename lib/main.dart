@@ -17,12 +17,10 @@ void main() async {
     debugPrint('Failed to initialize Supabase: $e');
   }
 
-  // Initialize ApaleoService — loads tokens from local storage or Supabase pms_tokens table
-  try {
-    await ApaleoService.instance.init();
-  } catch (e) {
+  // Initialize ApaleoService in the background — non-blocking so the UI renders instantly
+  ApaleoService.instance.init().catchError((e) {
     debugPrint('[main] ApaleoService.init error (non-fatal): $e');
-  }
+  });
 
   bool hasShownError = false;
 

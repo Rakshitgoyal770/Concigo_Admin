@@ -370,6 +370,11 @@ class PmsSyncService {
         }
       }
     } else {
+      // If the reservation is already Ended/CheckedOut in PMS and not in Concigo, do not create it
+      if (stayStatus == 'Ended') {
+        return;
+      }
+
       // Insert new stay
       final insertData = <String, dynamic>{
         'hotel_id': propertyId,

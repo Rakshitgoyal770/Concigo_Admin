@@ -27,7 +27,7 @@ class ApaleoAdapter implements PmsAdapter {
       propertyId: propertyCode,
       from: from,
       to: to,
-      statuses: statuses ?? ['Confirmed', 'InHouse', 'Reserved'],
+      statuses: statuses ?? ['Confirmed', 'InHouse', 'Reserved', 'Canceled', 'CheckedOut'],
     );
 
     return rawList.map((r) => _mapToCanonical(r, propertyCode)).toList();
@@ -186,7 +186,7 @@ class ApaleoAdapter implements PmsAdapter {
       if (resp != null) {
         return FolioChargeResult(
           isSuccess: true,
-          chargeId: resp['id']?.toString(),
+          chargeId: resp['id']?.toString() ?? resp['folioId']?.toString(),
           rawResponse: resp,
         );
       }
@@ -201,6 +201,131 @@ class ApaleoAdapter implements PmsAdapter {
       );
     }
   }
+
+  @override
+  Future<CanonicalFolio?> fetchFolio({
+    required String pmsReservationId,
+  }) async {
+    try {
+      final rawFolio = await _service.fetchCompleteFolio(pmsReservationId);
+      if (rawFolio == null) return null;
+      return _mapToCanonicalFolio(rawFolio, pmsReservationId);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  @override
+  Future<FolioPaymentResult> recordFolioPayment({
+    required String folioId,
+    required double amount,
+    required String currency,
+    required String paymentMethod,
+    String? receipt,
+  }) async {
+    try {
+      final resp = await _service.recordFolioPayment(
+        folioId: folioId,
+        amount: amount,
+        currency: currency,
+        paymentMethod: paymentMethod,
+        receipt: receipt,
+      );
+      if (resp != null) {
+        return FolioPaymentResult(
+          isSuccess: true,
+          paymentId: resp['id']?.toString() ?? resp['folioId']?.toString(),
+          rawResponse: resp,
+        );
+      }
+      return const FolioPaymentResult(
+        isSuccess: false,
+        errorMessage: 'Failed to record payment in Apaleo folio.',
+      );
+    } catch (e) {
+      return FolioPaymentResult(
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
+  CanonicalFolio _mapToCanonicalFolio(Map<String, dynamic> raw, String pmsReservationId) {
+    final folioId = raw['id']?.toString() ?? '';
+    final bookingId = raw['bookingId']?.toString();
+    final status = raw['status']?.toString() ?? 'Open';
+    final isMainFolio = raw['isMainFolio'] == true;
+
+    // Balance in Apaleo: negative indicates money owed by guest (e.g. -166.00 means 166.00 due)
+    final balMap = raw['balance'] as Map<String, dynamic>? ?? {};
+    final rawBal = (balMap['amount'] as num?)?.toDouble() ?? 0.0;
+    final currency = balMap['currency']?.toString() ?? 'EUR';
+    // Positive balance represents amount payable/due by guest
+    final double netBalanceDue = rawBal < 0 ? -rawBal : (rawBal == 0 ? 0.0 : rawBal);
+
+    // Map charges
+    final rawCharges = (raw['charges'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final List<CanonicalFolioCharge> charges = [];
+    for (final c in rawCharges) {
+      final amtMap = c['amount'] as Map<String, dynamic>? ?? {};
+      final gross = (amtMap['grossAmount'] as num?)?.toDouble() ?? (amtMap['amount'] as num?)?.toDouble() ?? 0.0;
+      final net = (amtMap['netAmount'] as num?)?.toDouble() ?? gross;
+      final vatPct = (amtMap['vatPercent'] as num?)?.toDouble() ?? 0.0;
+      final curr = amtMap['currency']?.toString() ?? currency;
+      final sDateStr = c['serviceDate']?.toString();
+
+      charges.add(CanonicalFolioCharge(
+        id: c['id']?.toString() ?? '',
+        name: c['name']?.toString() ?? 'Charge',
+        serviceType: c['serviceType']?.toString() ?? 'Other',
+        serviceDate: sDateStr != null ? DateTime.tryParse(sDateStr) : null,
+        grossAmount: gross,
+        netAmount: net,
+        vatPercent: vatPct,
+        currency: curr,
+        quantity: (c['quantity'] as num?)?.toInt() ?? 1,
+        isPosted: c['isPosted'] != false,
+        rawMetadata: c,
+      ));
+    }
+
+    // Map payments
+    final rawPayments = (raw['payments'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final List<CanonicalFolioPayment> payments = [];
+    for (final p in rawPayments) {
+      final amtMap = p['amount'] as Map<String, dynamic>? ?? {};
+      final amt = (amtMap['amount'] as num?)?.toDouble() ?? 0.0;
+      final curr = amtMap['currency']?.toString() ?? currency;
+      final pDateStr = (p['paymentDate'] ?? p['created'])?.toString();
+
+      payments.add(CanonicalFolioPayment(
+        id: p['id']?.toString() ?? '',
+        method: p['method']?.toString() ?? 'Payment',
+        amount: amt,
+        currency: curr,
+        paymentDate: pDateStr != null ? DateTime.tryParse(pDateStr) : null,
+        status: p['status']?.toString(),
+        rawMetadata: p,
+      ));
+    }
+
+    final allowed = (raw['allowedActions'] as List?)?.map((e) => e.toString()).toList() ?? [];
+
+    return CanonicalFolio(
+      folioId: folioId,
+      reservationId: pmsReservationId,
+      bookingId: bookingId,
+      status: status,
+      currency: currency,
+      balance: netBalanceDue,
+      isMainFolio: isMainFolio,
+      charges: charges,
+      payments: payments,
+      allowedActions: allowed,
+      rawMetadata: raw,
+    );
+  }
+
 
   // ─── Mapper ────────────────────────────────────────────────────────────────
 

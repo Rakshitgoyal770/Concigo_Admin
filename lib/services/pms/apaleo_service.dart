@@ -117,7 +117,7 @@ class ApaleoService {
         Uri.parse(_proxyUrl),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'action': 'get_token'}),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 3));
 
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -824,35 +824,121 @@ class ApaleoService {
     return resp.statusCode == 200 || resp.statusCode == 204;
   }
 
-  /// 5. Post Charge / Upsell (Early Checkin, Late Checkout, In-Room Dining) to Apaleo Folio
+  /// 5. Fetch Folios summary associated with a reservation in Apaleo PMS
+  Future<List<Map<String, dynamic>>> fetchFoliosForReservation(String reservationId) async {
+    var token = await getValidAccessToken();
+    if (token == null) throw Exception('Apaleo is not authenticated.');
+
+    final uri = Uri.parse('$_baseUrl/finance/v1/folios?reservationIds=$reservationId');
+    var resp = await http.get(uri, headers: {'Authorization': 'Bearer $token'});
+
+    if (resp.statusCode == 401) {
+      final freshToken = await getValidAccessToken(forceRefresh: true);
+      if (freshToken != null && freshToken != token) {
+        token = freshToken;
+        resp = await http.get(uri, headers: {'Authorization': 'Bearer $token'});
+      }
+    }
+
+    if (resp.statusCode == 200) {
+      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      return (data['folios'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    }
+    throw Exception('Failed to fetch folios for reservation $reservationId: ${resp.statusCode} ${resp.body}');
+  }
+
+  /// 5b. Fetch Detailed Folio (Line items, room charges, taxes, payments, balance)
+  Future<Map<String, dynamic>?> fetchFolioDetails(String folioId) async {
+    var token = await getValidAccessToken();
+    if (token == null) return null;
+
+    final uri = Uri.parse('$_baseUrl/finance/v1/folios/$folioId');
+    var resp = await http.get(uri, headers: {'Authorization': 'Bearer $token'});
+
+    if (resp.statusCode == 401) {
+      final freshToken = await getValidAccessToken(forceRefresh: true);
+      if (freshToken != null && freshToken != token) {
+        token = freshToken;
+        resp = await http.get(uri, headers: {'Authorization': 'Bearer $token'});
+      }
+    }
+
+    if (resp.statusCode == 200) {
+      return jsonDecode(resp.body) as Map<String, dynamic>?;
+    }
+    debugPrint('[ApaleoService] Failed to fetch folio details for $folioId: ${resp.statusCode} ${resp.body}');
+    return null;
+  }
+
+  /// 5c. Fetch Complete Guest Folio & Bill for a Reservation
+  Future<Map<String, dynamic>?> fetchCompleteFolio(String reservationId) async {
+    try {
+      final folios = await fetchFoliosForReservation(reservationId);
+      if (folios.isEmpty) {
+        debugPrint('[ApaleoService] No folios found for reservation $reservationId');
+        return null;
+      }
+
+      final mainFolioSummary = folios.firstWhere(
+        (f) => f['isMainFolio'] == true && (f['status']?.toString().toLowerCase() != 'closed'),
+        orElse: () => folios.firstWhere(
+          (f) => f['status']?.toString().toLowerCase() != 'closed',
+          orElse: () => folios.first,
+        ),
+      );
+
+      final folioId = mainFolioSummary['id']?.toString();
+      if (folioId == null || folioId.isEmpty) return null;
+
+      return await fetchFolioDetails(folioId);
+    } catch (e) {
+      debugPrint('[ApaleoService] fetchCompleteFolio exception: $e');
+      return null;
+    }
+  }
+
+  /// 6. Post Charge / Surcharge directly to the Apaleo Folio via Finance API
   Future<Map<String, dynamic>?> postChargeToFolio({
     required String reservationId,
+    String? folioId,
     required double amount,
     required String currency,
     required String serviceType,
     required String description,
+    String vatType = 'Normal',
   }) async {
-    final token = await getValidAccessToken();
+    var token = await getValidAccessToken();
     if (token == null) return null;
 
-    // First fetch primary folio for reservation
-    final foliosUri = Uri.parse('$_baseUrl/booking/v1/reservations/$reservationId');
-    final resResp = await http.get(foliosUri, headers: {'Authorization': 'Bearer $token'});
-    if (resResp.statusCode != 200) return null;
+    String? targetFolioId = folioId;
+    if (targetFolioId == null || targetFolioId.isEmpty) {
+      final folios = await fetchFoliosForReservation(reservationId);
+      if (folios.isEmpty) {
+        debugPrint('[ApaleoService] Cannot post charge: no folio found for reservation $reservationId');
+        return null;
+      }
+      final mainFolio = folios.firstWhere(
+        (f) => f['isMainFolio'] == true && f['status']?.toString().toLowerCase() != 'closed',
+        orElse: () => folios.first,
+      );
+      targetFolioId = mainFolio['id']?.toString();
+    }
 
-    // Post charge payload to folio charges
-    final chargeUri = Uri.parse('$_baseUrl/folio/v1/charges');
+    if (targetFolioId == null || targetFolioId.isEmpty) return null;
+
+    final chargeUri = Uri.parse('$_baseUrl/finance/v1/folio-actions/$targetFolioId/charges');
     final body = jsonEncode({
-      'reservationId': reservationId,
+      'name': description,
       'amount': {
         'amount': amount,
         'currency': currency,
       },
-      'name': description,
       'serviceType': serviceType,
+      'vatType': vatType,
+      'quantity': 1,
     });
 
-    final chargeResp = await http.post(
+    var resp = await http.post(
       chargeUri,
       headers: {
         'Authorization': 'Bearer $token',
@@ -861,9 +947,84 @@ class ApaleoService {
       body: body,
     );
 
-    if (chargeResp.statusCode == 200 || chargeResp.statusCode == 201) {
-      return jsonDecode(chargeResp.body) as Map<String, dynamic>?;
+    if (resp.statusCode == 401) {
+      final freshToken = await getValidAccessToken(forceRefresh: true);
+      if (freshToken != null && freshToken != token) {
+        token = freshToken;
+        resp = await http.post(
+          chargeUri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: body,
+        );
+      }
+    }
+
+    debugPrint('[ApaleoService] postChargeToFolio $targetFolioId: ${resp.statusCode} ${resp.body}');
+    if (resp.statusCode == 200 || resp.statusCode == 201 || resp.statusCode == 204) {
+      if (resp.body.isNotEmpty) {
+        return jsonDecode(resp.body) as Map<String, dynamic>?;
+      }
+      return {'status': 'posted', 'folioId': targetFolioId};
+    }
+    return null;
+  }
+
+  /// 7. Record a Custom Payment (Cash, CreditCard, BankTransfer, etc.) directly in Apaleo
+  Future<Map<String, dynamic>?> recordFolioPayment({
+    required String folioId,
+    required double amount,
+    required String currency,
+    required String paymentMethod,
+    String? receipt,
+  }) async {
+    var token = await getValidAccessToken();
+    if (token == null) return null;
+
+    final uri = Uri.parse('$_baseUrl/finance/v1/folios/$folioId/payments');
+    final body = jsonEncode({
+      'method': paymentMethod,
+      'amount': {
+        'amount': amount,
+        'currency': currency,
+      },
+      if (receipt != null && receipt.isNotEmpty) 'receipt': receipt,
+    });
+
+    var resp = await http.post(
+      uri,
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: body,
+    );
+
+    if (resp.statusCode == 401) {
+      final freshToken = await getValidAccessToken(forceRefresh: true);
+      if (freshToken != null && freshToken != token) {
+        token = freshToken;
+        resp = await http.post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: body,
+        );
+      }
+    }
+
+    debugPrint('[ApaleoService] recordFolioPayment $folioId: ${resp.statusCode} ${resp.body}');
+    if (resp.statusCode == 200 || resp.statusCode == 201 || resp.statusCode == 202) {
+      if (resp.body.isNotEmpty) {
+        return jsonDecode(resp.body) as Map<String, dynamic>?;
+      }
+      return {'status': 'success', 'folioId': folioId};
     }
     return null;
   }
 }
+

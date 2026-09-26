@@ -46,10 +46,10 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.propertyId.isNotEmpty) {
         ref.read(activePropertyIdProvider.notifier).state = widget.propertyId;
-        // Start automatic PMS polling loop (every 30 seconds)
+        // Start automatic PMS polling loop (every 5 minutes to preserve Disk IO)
         PmsSyncService.instance.startPeriodicSync(
           propertyId: widget.propertyId,
-          interval: const Duration(seconds: 30),
+          interval: const Duration(minutes: 5),
           onComplete: () {
             if (mounted) {
               ref.read(receptionRefreshSignalProvider.notifier).state++;

@@ -45,6 +45,20 @@ abstract class PmsAdapter {
     required String description,
     required String serviceType, // e.g. 'Extra', 'FoodAndBeverage', 'Other'
   });
+
+  /// 7. Fetch full live folio / bill details for a reservation from the PMS.
+  Future<CanonicalFolio?> fetchFolio({
+    required String pmsReservationId,
+  });
+
+  /// 8. Record a payment (Cash, Card, etc.) directly against the PMS folio.
+  Future<FolioPaymentResult> recordFolioPayment({
+    required String folioId,
+    required double amount,
+    required String currency,
+    required String paymentMethod,
+    String? receipt,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,3 +162,100 @@ class FolioChargeResult {
     this.rawResponse,
   });
 }
+
+class FolioPaymentResult {
+  final bool isSuccess;
+  final String? paymentId;
+  final String? errorMessage;
+  final Map<String, dynamic>? rawResponse;
+
+  const FolioPaymentResult({
+    required this.isSuccess,
+    this.paymentId,
+    this.errorMessage,
+    this.rawResponse,
+  });
+}
+
+class CanonicalFolio {
+  final String folioId;
+  final String reservationId;
+  final String? bookingId;
+  final String status; // 'Open', 'Closed'
+  final String currency;
+  final double balance; // Outstanding balance
+  final bool isMainFolio;
+  final List<CanonicalFolioCharge> charges;
+  final List<CanonicalFolioPayment> payments;
+  final List<String> allowedActions;
+  final Map<String, dynamic> rawMetadata;
+
+  const CanonicalFolio({
+    required this.folioId,
+    required this.reservationId,
+    this.bookingId,
+    required this.status,
+    required this.currency,
+    required this.balance,
+    this.isMainFolio = true,
+    this.charges = const [],
+    this.payments = const [],
+    this.allowedActions = const [],
+    this.rawMetadata = const {},
+  });
+
+  /// Total gross sum of all charges posted to this folio
+  double get totalCharges => charges.fold(0.0, (sum, c) => sum + c.grossAmount);
+
+  /// Total payments made to this folio
+  double get totalPayments => payments.fold(0.0, (sum, p) => sum + p.amount);
+}
+
+class CanonicalFolioCharge {
+  final String id;
+  final String name;
+  final String serviceType; // 'Accommodation', 'FoodAndBeverages', 'Extra', 'Other'
+  final DateTime? serviceDate;
+  final double grossAmount;
+  final double netAmount;
+  final double vatPercent;
+  final String currency;
+  final int quantity;
+  final bool isPosted;
+  final Map<String, dynamic> rawMetadata;
+
+  const CanonicalFolioCharge({
+    required this.id,
+    required this.name,
+    required this.serviceType,
+    this.serviceDate,
+    required this.grossAmount,
+    required this.netAmount,
+    required this.vatPercent,
+    required this.currency,
+    this.quantity = 1,
+    this.isPosted = true,
+    this.rawMetadata = const {},
+  });
+}
+
+class CanonicalFolioPayment {
+  final String id;
+  final String method; // 'Cash', 'CreditCard', etc.
+  final double amount;
+  final String currency;
+  final DateTime? paymentDate;
+  final String? status;
+  final Map<String, dynamic> rawMetadata;
+
+  const CanonicalFolioPayment({
+    required this.id,
+    required this.method,
+    required this.amount,
+    required this.currency,
+    this.paymentDate,
+    this.status,
+    this.rawMetadata = const {},
+  });
+}
+

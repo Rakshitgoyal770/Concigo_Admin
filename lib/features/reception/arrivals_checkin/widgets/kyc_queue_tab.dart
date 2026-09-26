@@ -29,8 +29,8 @@ class _KycQueueTabState extends ConsumerState<KycQueueTab> {
   @override
   void initState() {
     super.initState();
-    // 1. Periodic Heartbeat: Silently checks queue every 10 seconds
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    // 1. Periodic Heartbeat: Fallback poll every 60 seconds (realtime handles instant updates)
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       _pulseHeartbeat(silent: true);
     });
 

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -1362,6 +1363,10 @@ class SupabaseService {
             'updated_at': DateTime.now().toIso8601String(),
           })
           .eq('so_id', orderId);
+
+      if (status == 'delivered') {
+        _triggerPmsPush(sourceType: 'service_order', sourceId: orderId);
+      }
     } on PostgrestException catch (e) {
       throw Exception('Failed to update order status: ${e.message}');
     }
@@ -2281,6 +2286,10 @@ class SupabaseService {
             'updated_at': DateTime.now().toIso8601String(),
           })
           .eq('spa_order_id', spaOrderId);
+
+      if (status == 'serviced') {
+        _triggerPmsPush(sourceType: 'spa_order', sourceId: spaOrderId);
+      }
     } on PostgrestException catch (e) {
       throw Exception('Failed to update spa order status: ${e.message}');
     }
@@ -2615,7 +2624,9 @@ class SupabaseService {
           })
           .select('bill_id')
           .single();
-      return result['bill_id'] as String;
+      final billId = result['bill_id'] as String;
+      _triggerPmsPush(sourceType: 'service_bill', sourceId: billId, stayId: stayId);
+      return billId;
     } on PostgrestException catch (e) {
       throw Exception('Failed to create bill: ${e.message}');
     }
@@ -3420,4 +3431,29 @@ class SupabaseService {
       throw Exception('Failed to allot bellboy request: ${e.message}');
     }
   }
+
+  /// Fire-and-forget PMS charge push helper
+  void _triggerPmsPush({
+    required String sourceType,
+    required String sourceId,
+    String? stayId,
+  }) {
+    try {
+      client.functions.invoke(
+        'push-charges-to-pms',
+        body: {
+          'source_type': sourceType,
+          'source_id': sourceId,
+          if (stayId != null) 'stay_id': stayId,
+        },
+      ).then((res) {
+        debugPrint('[PMS-Push] Push result for $sourceType $sourceId: ${res.data}');
+      }).catchError((err) {
+        debugPrint('[PMS-Push] Error invoking push-charges-to-pms: $err');
+      });
+    } catch (e) {
+      debugPrint('[PMS-Push] Exception: $e');
+    }
+  }
 }
+
