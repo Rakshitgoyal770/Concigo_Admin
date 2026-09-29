@@ -21,7 +21,7 @@ class KycQueueTab extends ConsumerStatefulWidget {
 }
 
 class _KycQueueTabState extends ConsumerState<KycQueueTab> {
-  Timer? _heartbeatTimer;
+  Timer? _debounceTimer;
   DateTime _lastPulseTime = DateTime.now();
   bool _isSyncing = false;
   RealtimeChannel? _realtimeChannel;
@@ -29,12 +29,7 @@ class _KycQueueTabState extends ConsumerState<KycQueueTab> {
   @override
   void initState() {
     super.initState();
-    // 1. Periodic Heartbeat: Fallback poll every 60 seconds (realtime handles instant updates)
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      _pulseHeartbeat(silent: true);
-    });
-
-    // 2. Realtime WebSocket: Instantly refreshes on checkin_requests INSERT / UPDATE
+    // Realtime WebSocket: Instantly refreshes on checkin_requests INSERT / UPDATE
     _subscribeToRealtime();
   }
 
@@ -66,22 +61,30 @@ class _KycQueueTabState extends ConsumerState<KycQueueTab> {
     } catch (_) {}
   }
 
-  Future<void> _pulseHeartbeat({bool silent = false}) async {
-    if (_isSyncing) return;
-    if (!silent && mounted) setState(() => _isSyncing = true);
-    _lastPulseTime = DateTime.now();
-
-    // Invalidate checkinRequestsProvider to trigger a fresh background query
-    ref.invalidate(checkinRequestsProvider);
-
-    if (mounted) {
-      setState(() => _isSyncing = false);
+  void _pulseHeartbeat({bool silent = false}) {
+    _debounceTimer?.cancel();
+    if (!silent) {
+      // Manual trigger - run immediately with syncing state
+      if (mounted) setState(() => _isSyncing = true);
+      ref.invalidate(checkinRequestsProvider);
+      if (mounted) {
+        setState(() {
+          _isSyncing = false;
+          _lastPulseTime = DateTime.now();
+        });
+      }
+      return;
     }
+    _debounceTimer = Timer(const Duration(seconds: 2), () {
+      // Collapses burst of N events -> 1 query
+      ref.invalidate(checkinRequestsProvider);
+      if (mounted) setState(() => _lastPulseTime = DateTime.now());
+    });
   }
 
   @override
   void dispose() {
-    _heartbeatTimer?.cancel();
+    _debounceTimer?.cancel();
     _unsubscribeRealtime();
     super.dispose();
   }

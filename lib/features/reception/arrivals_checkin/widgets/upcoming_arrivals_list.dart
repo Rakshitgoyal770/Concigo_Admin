@@ -35,7 +35,7 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
   ArrivalDateFilter _selectedFilter = ArrivalDateFilter.all;
   DateTime? _customDate;
 
-  Timer? _heartbeatTimer;
+  Timer? _debounceTimer;
   DateTime _lastPulseTime = DateTime.now();
   bool _isSyncing = false;
   RealtimeChannel? _realtimeChannel;
@@ -43,12 +43,7 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
   @override
   void initState() {
     super.initState();
-    // 1. Periodic Heartbeat: Fallback refresh arrivals every 60 seconds
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      _pulseHeartbeat(silent: true);
-    });
-
-    // 2. Realtime WebSocket: Instantly refresh on any stay row changes
+    // Realtime WebSocket: Instantly refresh on stay row changes filtered to Upcoming
     _subscribeToRealtime();
   }
 
@@ -60,6 +55,11 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
             event: PostgresChangeEvent.all,
             schema: 'public',
             table: 'stay',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'status',
+              value: 'Upcoming',
+            ),
             callback: (payload) {
               debugPrint('⚡ [Upcoming Arrivals Heartbeat] Realtime stay event: ${payload.eventType}');
               _pulseHeartbeat(silent: true);
@@ -80,22 +80,30 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
     } catch (_) {}
   }
 
-  Future<void> _pulseHeartbeat({bool silent = false}) async {
-    if (_isSyncing) return;
-    if (!silent && mounted) setState(() => _isSyncing = true);
-    _lastPulseTime = DateTime.now();
-
-    // Silently re-query upcoming arrivals provider
-    ref.invalidate(upcomingStaysProvider);
-
-    if (mounted) {
-      setState(() => _isSyncing = false);
+  void _pulseHeartbeat({bool silent = false}) {
+    _debounceTimer?.cancel();
+    if (!silent) {
+      // Manual trigger - run immediately with syncing state
+      if (mounted) setState(() => _isSyncing = true);
+      ref.invalidate(upcomingStaysProvider);
+      if (mounted) {
+        setState(() {
+          _isSyncing = false;
+          _lastPulseTime = DateTime.now();
+        });
+      }
+      return;
     }
+    _debounceTimer = Timer(const Duration(seconds: 2), () {
+      // Collapses burst of N events -> 1 query
+      ref.invalidate(upcomingStaysProvider);
+      if (mounted) setState(() => _lastPulseTime = DateTime.now());
+    });
   }
 
   @override
   void dispose() {
-    _heartbeatTimer?.cancel();
+    _debounceTimer?.cancel();
     _unsubscribeRealtime();
     super.dispose();
   }

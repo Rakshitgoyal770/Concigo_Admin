@@ -36,7 +36,7 @@ class _PreCheckinRequestsScreenState extends State<PreCheckinRequestsScreen>
   // 'approved' tab (was 'accepted')
   List<Map<String, dynamic>> _acceptedList = [];
 
-  Timer? _heartbeatTimer;
+  Timer? _debounceTimer;
   DateTime _lastPulseTime = DateTime.now();
   bool _isSyncing = false;
   RealtimeChannel? _realtimeChannel;
@@ -47,12 +47,7 @@ class _PreCheckinRequestsScreenState extends State<PreCheckinRequestsScreen>
     _tabController = TabController(length: 2, vsync: this);
     _loadRequests();
 
-    // 1. Periodic Heartbeat every 60 seconds
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      _loadRequests(silent: true);
-    });
-
-    // 2. Realtime WebSocket listener
+    // Realtime WebSocket listener
     _subscribeToRealtime();
   }
 
@@ -66,7 +61,10 @@ class _PreCheckinRequestsScreenState extends State<PreCheckinRequestsScreen>
             table: 'checkin_requests',
             callback: (payload) {
               debugPrint('⚡ [PreCheckin Screen Heartbeat] Realtime change: ${payload.eventType}');
-              _loadRequests(silent: true);
+              _debounceTimer?.cancel();
+              _debounceTimer = Timer(const Duration(seconds: 2), () {
+                if (mounted) _loadRequests(silent: true);
+              });
             },
           )
           .subscribe();
@@ -86,7 +84,7 @@ class _PreCheckinRequestsScreenState extends State<PreCheckinRequestsScreen>
 
   @override
   void dispose() {
-    _heartbeatTimer?.cancel();
+    _debounceTimer?.cancel();
     _unsubscribeRealtime();
     _tabController.dispose();
     super.dispose();

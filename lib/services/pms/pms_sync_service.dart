@@ -688,6 +688,16 @@ class PmsSyncService {
     // Ensure PMS reservation ID is recorded on checkin_requests for 2-way tracking.
     // BUG-6: Always create/update a checkin_request even when user resolution failed,
     // so the PMS tag is never lost and resurrection prevention always works.
+    //
+    // RACE-CONDITION FIX (Ghost Booking Prevention):
+    // Two concurrent callers (webhook + PMS poll) can both reach this point with a
+    // freshly-inserted stay row.  The unique partial index on checkin_requests(remark)
+    // ensures only ONE "PMS:<id>" tag survives.  When the second caller hits the 23505
+    // duplicate-key error we:
+    //   1. Find the *winning* CR (the one that was committed first).
+    //   2. If the winner points to a DIFFERENT stay, delete the ghost stay we just created.
+    //   3. Re-point stayId to the winner so downstream room-linking is correct.
+    // This mirrors the identical fix in the apaleo-webhook Edge Function (index.ts).
     if (res.pmsReservationId.isNotEmpty) {
       try {
         final existingCr = await _client
@@ -697,8 +707,7 @@ class PmsSyncService {
             .limit(1) as List;
 
         if (existingCr.isNotEmpty) {
-          // FIX: also promote status to 'approved' when stay becomes Active (InHouse in PMS)
-          // Previously only 'remark' was updated — checkin_request stayed 'pending' forever
+          // CR already exists for this stay — just sync the remark + status.
           final crStatusUpdate = <String, dynamic>{
             'remark': pmsTag,
           };
@@ -711,7 +720,7 @@ class PmsSyncService {
               .update(crStatusUpdate)
               .eq('id', existingCr.first['id']);
         } else {
-          // Always insert — resolve main_user_id from stay if guestUserId is null
+          // No CR for this stay yet — attempt to insert.
           var effectiveUserId = guestUserId;
           if (effectiveUserId == null) {
             final stayRow = await _client.from('stay').select('main_user_id').eq('stay_id', stayId).maybeSingle();
@@ -719,21 +728,63 @@ class PmsSyncService {
           }
           if (effectiveUserId != null && effectiveUserId.isNotEmpty) {
             final code = (1000 + (DateTime.now().millisecondsSinceEpoch % 9000)).toString();
-            await _client.from('checkin_requests').insert({
-              'stay_id': stayId,
-              'main_user_id': effectiveUserId,
-              'status': stayStatus == 'Active' ? 'approved' : 'pending',
-              'checkin_code': code,
-              'remark': pmsTag,
-              'submitted_req': [],
-            });
+            try {
+              await _client.from('checkin_requests').insert({
+                'stay_id': stayId,
+                'main_user_id': effectiveUserId,
+                'status': stayStatus == 'Active' ? 'approved' : 'pending',
+                'checkin_code': code,
+                'remark': pmsTag,
+                'submitted_req': [],
+              });
+            } on PostgrestException catch (pgErr) {
+              // 23505 = unique_violation: another concurrent call already inserted
+              // a checkin_request with the same PMS tag.  This means we created a
+              // ghost stay.  Find the winning stay and delete our orphan.
+              if (pgErr.code == '23505') {
+                debugPrint('[PmsSyncService] ⚡ Race caught for $pmsTag (23505). Resolving orphan stay...');
+                try {
+                  final winnerCrList = await _client
+                      .from('checkin_requests')
+                      .select('id, stay_id, status')
+                      .eq('remark', pmsTag)
+                      .limit(1) as List;
+
+                  if (winnerCrList.isNotEmpty) {
+                    final winnerStayId = winnerCrList.first['stay_id']?.toString();
+                    if (winnerStayId != null && winnerStayId != stayId) {
+                      // Delete the ghost stay we just created
+                      debugPrint('[PmsSyncService] Deleting ghost stay $stayId. Winner: $winnerStayId');
+                      await _client.from('stay_guests').delete().eq('stay_id', stayId);
+                      await _client.from('stay').delete().eq('stay_id', stayId);
+                      stayId = winnerStayId; // Re-point to winner for room-linking below
+                    }
+                    // Sync status on the winning CR if needed
+                    if (stayStatus == 'Active') {
+                      final winnerCrStatus = winnerCrList.first['status']?.toString();
+                      if (winnerCrStatus != 'approved') {
+                        await _client.from('checkin_requests')
+                            .update({'status': 'approved', 'updated_at': DateTime.now().toIso8601String()})
+                            .eq('id', winnerCrList.first['id']);
+                      }
+                    }
+                  }
+                } catch (cleanupErr) {
+                  debugPrint('[PmsSyncService] Orphan cleanup error (non-fatal): $cleanupErr');
+                }
+              } else {
+                debugPrint('[PmsSyncService] CR insert error for $pmsTag: ${pgErr.message}');
+              }
+            }
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[PmsSyncService] checkin_request sync error for $pmsTag (non-fatal): $e');
+      }
     }
 
     // 3. Link Room in `rooms` & `stay_rooms`
-    if (res.assignedRoomNumber != null && res.assignedRoomNumber!.isNotEmpty) {
+    if (stayId != null && res.assignedRoomNumber != null && res.assignedRoomNumber!.isNotEmpty) {
       await _linkStayRoom(
         propertyId: propertyId,
         stayId: stayId,

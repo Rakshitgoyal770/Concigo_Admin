@@ -1325,35 +1325,57 @@ class SupabaseService {
     String? serviceDeptId,
   }) async {
     try {
-      // B1 FIX — Step 0: Scope to property by pre-fetching its room IDs and booked statuses.
-      // Without this, ALL orders from ALL hotels would be returned.
+      // 1. Fetch all rooms for this property to build fast lookup sets
       final propertyRoomsRaw = await client
           .from('rooms')
-          .select('room_id, is_booked')
+          .select('room_id, room_number, is_booked')
           .eq('property_id', propertyId);
       final propertyRoomIds = (propertyRoomsRaw as List)
-          .map((r) => r['room_id'] as String)
-          .toList();
-      final bookedRoomIds = (propertyRoomsRaw as List)
-          .where((r) => r['is_booked'] == true)
-          .map((r) => r['room_id'] as String)
+          .map((r) => r['room_id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
           .toSet();
+      final roomIdToNumber = <String, String>{
+        for (final r in (propertyRoomsRaw as List))
+          if (r['room_id'] != null && r['room_number'] != null)
+            r['room_id'].toString(): r['room_number'].toString(),
+      };
 
-      if (propertyRoomIds.isEmpty) {
-        return {'newOrders': [], 'unallottedOrders': [], 'allottedOrders': []};
+      // 2. Fetch all stays belonging to this property (directly via hotel_id)
+      final propertyStayIds = <String>{};
+      try {
+        final propertyStaysRaw = await client
+            .from('stay')
+            .select('stay_id')
+            .eq('hotel_id', propertyId);
+        for (final s in (propertyStaysRaw as List)) {
+          final sid = s['stay_id']?.toString();
+          if (sid != null && sid.isNotEmpty) {
+            propertyStayIds.add(sid);
+          }
+        }
+      } catch (e) {
+        debugPrint('[SupabaseService] Error fetching stays for property: $e');
       }
 
-      // Also resolve stay IDs for this property (orders that use stay_id instead of room_id)
-      final stayRoomsForPropRaw = await client
-          .from('stay_rooms')
-          .select('stay_id')
-          .inFilter('room_id', propertyRoomIds);
-      final propertyStayIds = (stayRoomsForPropRaw as List)
-          .map((sr) => sr['stay_id'] as String)
-          .toSet()
-          .toList();
+      // Also include any stays linked via stay_rooms to this property's rooms
+      if (propertyRoomIds.isNotEmpty) {
+        try {
+          final stayRoomsRaw = await client
+              .from('stay_rooms')
+              .select('stay_id')
+              .inFilter('room_id', propertyRoomIds.toList());
+          for (final sr in (stayRoomsRaw as List)) {
+            final sid = sr['stay_id']?.toString();
+            if (sid != null && sid.isNotEmpty) {
+              propertyStayIds.add(sid);
+            }
+          }
+        } catch (_) {}
+      }
 
-      // Step 1: Fetch all relevant orders scoped to this property
+      // 3. Fetch all active orders in status ['ordered', 'in_progress'].
+      // Doing this without massive inFilter lists prevents statement timeouts (code: 57014)
+      // and lets Postgres use the (status) index in ~5ms.
       var query = client
           .from('service_orders')
           .select(
@@ -1361,80 +1383,75 @@ class SupabaseService {
           )
           .inFilter('status', ['ordered', 'in_progress']);
 
-      // Apply property scope: match orders by room_id OR stay_id belonging to this property
-      final roomFilter = 'room_id.in.(${propertyRoomIds.join(",")})';
-      final stayFilter = propertyStayIds.isNotEmpty
-          ? ',stay_id.in.(${propertyStayIds.join(",")})'
-          : '';
-      query = query.or('$roomFilter$stayFilter');
-
-      if (serviceDeptId != null && serviceDeptId.isNotEmpty) {
-        query = query.eq('serv_id', serviceDeptId);
-      }
-
       final ordersRaw = await query.order('created_at', ascending: false);
-      final orders = List<Map<String, dynamic>>.from(ordersRaw);
+      final allOpenOrders = List<Map<String, dynamic>>.from(ordersRaw);
 
-      if (orders.isEmpty) {
+      if (allOpenOrders.isEmpty) {
         return {'newOrders': [], 'unallottedOrders': [], 'allottedOrders': []};
       }
 
-      // Step 2: Collect all unique stay_ids from orders
-      final stayIds = orders
-          .map((o) => o['stay_id'] as String?)
-          .where((id) => id != null)
+      // 4. Scope orders to this property:
+      // Match orders where either room_id belongs to property, OR stay_id belongs to property.
+      final propertyOrders = allOpenOrders.where((o) {
+        final rid = o['room_id']?.toString();
+        final sid = o['stay_id']?.toString();
+        if (rid != null && propertyRoomIds.contains(rid)) return true;
+        if (sid != null && propertyStayIds.contains(sid)) return true;
+        return false;
+      }).toList();
+
+      if (propertyOrders.isEmpty) {
+        return {'newOrders': [], 'unallottedOrders': [], 'allottedOrders': []};
+      }
+
+      // 5. Filter by service department if manager is assigned to a specific dept (e.g. Kitchen)
+      // Note: Orders with null or empty serv_id are retained so general/unassigned orders are never lost.
+      final deptFilteredOrders = propertyOrders.where((o) {
+        if (serviceDeptId == null || serviceDeptId.isEmpty) return true;
+        final orderServId = o['serv_id']?.toString();
+        return orderServId == serviceDeptId || orderServId == null || orderServId.isEmpty;
+      }).toList();
+
+      // 6. Check for truly departed (Ended) stays only.
+      // NEVER cancel orders belonging to Upcoming or Active stays!
+      final orderStayIds = deptFilteredOrders
+          .map((o) => o['stay_id']?.toString())
+          .where((id) => id != null && id.isNotEmpty)
           .toSet()
           .cast<String>()
           .toList();
 
-      // Guard: fetch stay statuses to filter out any orders belonging to non-Active stays
-      final activeStayIds = <String>{};
       final endedStayIds = <String>{};
-      if (stayIds.isNotEmpty) {
+      if (orderStayIds.isNotEmpty) {
         try {
           final staysRaw = await client
               .from('stay')
               .select('stay_id, status')
-              .inFilter('stay_id', stayIds);
+              .inFilter('stay_id', orderStayIds);
           for (final s in (staysRaw as List)) {
             final st = (s['status'] as String? ?? '').toLowerCase();
-            if (st == 'active') {
-              activeStayIds.add(s['stay_id'] as String);
-            } else {
-              endedStayIds.add(s['stay_id'] as String);
+            if (st == 'ended') {
+              endedStayIds.add(s['stay_id'].toString());
             }
           }
         } catch (_) {}
       }
 
-      // Filter out orders for ended stays, inactive stays, or unbooked rooms
       final activeOrders = <Map<String, dynamic>>[];
       final staleOrderIds = <String>[];
 
-      for (final o in orders) {
-        final sid = o['stay_id'] as String?;
-        final rid = o['room_id'] as String?;
-        final soId = o['so_id'] as String?;
-        final orderType = o['order_type'] as String?;
-        final isPoolSide = orderType == 'pool_side';
+      for (final o in deptFilteredOrders) {
+        final sid = o['stay_id']?.toString();
+        final soId = o['so_id']?.toString();
 
-        bool isStale = false;
-        if (sid != null) {
-          if (endedStayIds.contains(sid) || !activeStayIds.contains(sid)) {
-            isStale = true;
-          }
-        } else if (!isPoolSide && rid != null && !bookedRoomIds.contains(rid)) {
-          isStale = true;
-        }
-
-        if (isStale) {
+        if (sid != null && endedStayIds.contains(sid)) {
           if (soId != null) staleOrderIds.add(soId);
         } else {
           activeOrders.add(o);
         }
       }
 
-      // Asynchronously cancel stale departed orders in DB so they don't linger
+      // Clean up truly ended stay orders in background
       if (staleOrderIds.isNotEmpty) {
         client
             .from('service_orders')
@@ -1455,95 +1472,74 @@ class SupabaseService {
         return {'newOrders': [], 'unallottedOrders': [], 'allottedOrders': []};
       }
 
-      // Step 3: Fetch stay_rooms to get room_id per stay_id
+      // 7. Resolve room_id from stay_rooms for orders that only have stay_id
       Map<String, String> stayToRoomId = {};
       final activeStayIdsFromOrders = activeOrders
-          .map((o) => o['stay_id'] as String?)
-          .where((id) => id != null)
+          .map((o) => o['stay_id']?.toString())
+          .where((id) => id != null && id.isNotEmpty)
           .toSet()
           .cast<String>()
           .toList();
+
       if (activeStayIdsFromOrders.isNotEmpty) {
-        final stayRoomsRaw = await client
-            .from('stay_rooms')
-            .select('stay_id, room_id')
-            .inFilter('stay_id', activeStayIdsFromOrders);
-        for (final sr in stayRoomsRaw as List) {
-          final sid = sr['stay_id'] as String?;
-          final rid = sr['room_id'] as String?;
-          if (sid != null && rid != null && !stayToRoomId.containsKey(sid)) {
-            stayToRoomId[sid] = rid;
+        try {
+          final stayRoomsRaw = await client
+              .from('stay_rooms')
+              .select('stay_id, room_id')
+              .inFilter('stay_id', activeStayIdsFromOrders);
+          for (final sr in stayRoomsRaw as List) {
+            final sid = sr['stay_id']?.toString();
+            final rid = sr['room_id']?.toString();
+            if (sid != null && rid != null && !stayToRoomId.containsKey(sid)) {
+              stayToRoomId[sid] = rid;
+            }
           }
-        }
+        } catch (_) {}
       }
 
-      // Step 4: Collect all room_ids (from direct room_id on order + stay_rooms)
-      final allRoomIds = <String>{};
-      for (final o in activeOrders) {
-        final stayId = o['stay_id'] as String?;
-        final directRoomId = o['room_id'] as String?;
-        if (directRoomId != null && directRoomId.isNotEmpty) {
-          allRoomIds.add(directRoomId);
-        } else if (stayId != null && stayToRoomId.containsKey(stayId)) {
-          allRoomIds.add(stayToRoomId[stayId]!);
-        }
-      }
-
-      // Step 5: Fetch room numbers for all room_ids
-      Map<String, String> roomIdToNumber = {};
-      if (allRoomIds.isNotEmpty) {
-        final roomsRaw = await client
-            .from('rooms')
-            .select('room_id, room_number')
-            .inFilter('room_id', allRoomIds.toList());
-        for (final r in roomsRaw as List) {
-          final rid = r['room_id'] as String?;
-          final rnum = r['room_number'] as String?;
-          if (rid != null && rnum != null) {
-            roomIdToNumber[rid] = rnum;
-          }
-        }
-      }
-
-      // Step 6: Fetch all order_allotments for in_progress orders
+      // 8. Fetch all order_allotments for in_progress orders
       final inProgressIds = activeOrders
           .where((o) => o['status'] == 'in_progress')
           .map((o) => o['so_id'] as String)
           .toList();
 
-      // Map: so_id -> allotment data
       Map<String, Map<String, dynamic>> allotmentMap = {};
       if (inProgressIds.isNotEmpty) {
-        final allotmentsRaw = await client
-            .from('order_allotments')
-            .select(
-              'id, orderid, employee_id, alloter_employee_id, order_price, property_employees!order_allotments_employee_id_fkey(emp_f_name, emp_l_name)',
-            )
-            .inFilter('orderid', inProgressIds);
-        for (final a in allotmentsRaw as List) {
-          final oid = a['orderid'] as String?;
-          if (oid != null) {
-            allotmentMap[oid] = Map<String, dynamic>.from(a);
+        try {
+          final allotmentsRaw = await client
+              .from('order_allotments')
+              .select(
+                'id, orderid, employee_id, alloter_employee_id, order_price, property_employees!order_allotments_employee_id_fkey(emp_f_name, emp_l_name)',
+              )
+              .inFilter('orderid', inProgressIds);
+          for (final a in allotmentsRaw as List) {
+            final oid = a['orderid']?.toString();
+            if (oid != null) {
+              allotmentMap[oid] = Map<String, dynamic>.from(a);
+            }
           }
+        } catch (e) {
+          debugPrint('[SupabaseService] Allotment fetch error: $e');
         }
       }
 
-      // Step 7: Enrich each order with room_number and allotment info
+      // 9. Enrich each order with room_number and allotment info
       List<Map<String, dynamic>> newOrders = [];
       List<Map<String, dynamic>> unallottedOrders = [];
       List<Map<String, dynamic>> allottedOrders = [];
 
       for (final o in activeOrders) {
         final soId = o['so_id'] as String;
-        final stayId = o['stay_id'] as String?;
-        final directRoomId = o['room_id'] as String?;
+        final stayId = o['stay_id']?.toString();
+        final directRoomId = o['room_id']?.toString();
         final deliveryLocation = o['delivery_location'] as String?;
         final orderType = o['order_type'] as String?;
         final status = o['status'] as String? ?? 'ordered';
         final serviceData = o['services'] as Map<String, dynamic>?;
 
         final bool isPoolSide = orderType == 'pool_side' ||
-            (deliveryLocation != null && deliveryLocation.trim().isNotEmpty &&
+            (deliveryLocation != null &&
+                deliveryLocation.trim().isNotEmpty &&
                 deliveryLocation.toLowerCase().contains('pool'));
 
         // Resolve room number: prefer delivery location for poolside, then direct room_id, then stay_rooms
@@ -1623,55 +1619,54 @@ class SupabaseService {
     }
   }
 
-  /// Sweeps and cancels all open service orders for a property whose stay is Ended or whose room is vacant/unbooked
+  /// Sweeps and cancels all open service orders for a property whose stay has explicitly Ended
   Future<int> sweepDepartedOrders(String propertyId) async {
     try {
       final propertyRoomsRaw = await client
           .from('rooms')
-          .select('room_id, is_booked')
+          .select('room_id')
           .eq('property_id', propertyId);
       final propertyRoomIds = (propertyRoomsRaw as List)
-          .map((r) => r['room_id'] as String)
-          .toList();
-      final bookedRoomIds = (propertyRoomsRaw as List)
-          .where((r) => r['is_booked'] == true)
-          .map((r) => r['room_id'] as String)
+          .map((r) => r['room_id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
           .toSet();
 
-      if (propertyRoomIds.isEmpty) return 0;
+      final propertyStayIds = <String>{};
+      try {
+        final propertyStaysRaw = await client
+            .from('stay')
+            .select('stay_id')
+            .eq('hotel_id', propertyId);
+        for (final s in (propertyStaysRaw as List)) {
+          final sid = s['stay_id']?.toString();
+          if (sid != null && sid.isNotEmpty) propertyStayIds.add(sid);
+        }
+      } catch (_) {}
 
-      final stayRoomsForPropRaw = await client
-          .from('stay_rooms')
-          .select('stay_id')
-          .inFilter('room_id', propertyRoomIds);
-      final propertyStayIds = (stayRoomsForPropRaw as List)
-          .map((sr) => sr['stay_id'] as String)
-          .toSet()
-          .toList();
-
-      var query = client
+      final ordersRaw = await client
           .from('service_orders')
-          .select('so_id, stay_id, room_id, order_type')
+          .select('so_id, stay_id, room_id')
           .inFilter('status', ['ordered', 'in_progress']);
 
-      final roomFilter = 'room_id.in.(${propertyRoomIds.join(",")})';
-      final stayFilter = propertyStayIds.isNotEmpty
-          ? ',stay_id.in.(${propertyStayIds.join(",")})'
-          : '';
-      query = query.or('$roomFilter$stayFilter');
+      final allOrders = List<Map<String, dynamic>>.from(ordersRaw);
+      final propertyOrders = allOrders.where((o) {
+        final rid = o['room_id']?.toString();
+        final sid = o['stay_id']?.toString();
+        if (rid != null && propertyRoomIds.contains(rid)) return true;
+        if (sid != null && propertyStayIds.contains(sid)) return true;
+        return false;
+      }).toList();
 
-      final ordersRaw = await query;
-      final orders = List<Map<String, dynamic>>.from(ordersRaw);
-      if (orders.isEmpty) return 0;
+      if (propertyOrders.isEmpty) return 0;
 
-      final stayIds = orders
-          .map((o) => o['stay_id'] as String?)
-          .where((id) => id != null)
+      final stayIds = propertyOrders
+          .map((o) => o['stay_id']?.toString())
+          .where((id) => id != null && id.isNotEmpty)
           .toSet()
           .cast<String>()
           .toList();
 
-      final activeStayIds = <String>{};
+      final endedStayIds = <String>{};
       if (stayIds.isNotEmpty) {
         try {
           final staysRaw = await client
@@ -1679,30 +1674,18 @@ class SupabaseService {
               .select('stay_id, status')
               .inFilter('stay_id', stayIds);
           for (final s in (staysRaw as List)) {
-            if ((s['status'] as String? ?? '').toLowerCase() == 'active') {
-              activeStayIds.add(s['stay_id'] as String);
+            if ((s['status'] as String? ?? '').toLowerCase() == 'ended') {
+              endedStayIds.add(s['stay_id'].toString());
             }
           }
         } catch (_) {}
       }
 
       final staleOrderIds = <String>[];
-      for (final o in orders) {
-        final sid = o['stay_id'] as String?;
-        final rid = o['room_id'] as String?;
-        final soId = o['so_id'] as String?;
-        final isPoolSide = o['order_type'] == 'pool_side';
-
-        bool isStale = false;
-        if (sid != null) {
-          if (!activeStayIds.contains(sid)) {
-            isStale = true;
-          }
-        } else if (!isPoolSide && rid != null && !bookedRoomIds.contains(rid)) {
-          isStale = true;
-        }
-
-        if (isStale && soId != null) {
+      for (final o in propertyOrders) {
+        final sid = o['stay_id']?.toString();
+        final soId = o['so_id']?.toString();
+        if (sid != null && endedStayIds.contains(sid) && soId != null) {
           staleOrderIds.add(soId);
         }
       }
