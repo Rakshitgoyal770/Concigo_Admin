@@ -28,6 +28,20 @@ class PmsSyncService {
   VoidCallback? onSyncCompleted;
   int _syncCycleCounter = 0;
 
+  /// In-memory cache: pmsReservationId → last seen PMS `modified` timestamp.
+  /// Used to skip DB work for reservations that haven't changed between sync cycles.
+  /// Cache is cleared when the sync service is stopped or app restarts.
+  final Map<String, DateTime> _lastSeenModifiedAt = {};
+
+  /// In-memory cache: pmsReservationId → last synced status in Concigo.
+  /// Lets us fast-path skip Ended+Ended reservations without any DB lookup.
+  final Map<String, String> _lastSeenStatus = {};
+
+  /// Fires every time a sync cycle completes successfully.
+  /// UI widgets can listen to this to show "last synced X ago" indicators.
+  static final ValueNotifier<DateTime?> lastSyncNotifier = ValueNotifier(null);
+
+
   /// Starts an automatic polling loop that queries the PMS periodically (default: every 30 seconds).
   void startPeriodicSync({
     required String propertyId,
@@ -37,6 +51,7 @@ class PmsSyncService {
     stopPeriodicSync();
     if (onComplete != null) onSyncCompleted = onComplete;
     _syncCycleCounter = 0;
+    _isSyncing = false;
     debugPrint('[PmsSyncService] Auto-sync loop activated for property $propertyId (every ${interval.inSeconds}s)');
 
     // Immediate initial sync: sync physical rooms first, then reservations
@@ -47,14 +62,27 @@ class PmsSyncService {
     });
 
     _periodicTimer = Timer.periodic(interval, (_) async {
-      _syncCycleCounter++;
-      // Re-sync physical rooms every 10 cycles (~5 minutes) to catch room extensions/modifications
-      if (_syncCycleCounter % 10 == 0) {
-        await syncPhysicalRooms(propertyId: propertyId);
+      // Skip this tick if sync is already running
+      if (_isSyncing) {
+        debugPrint('[PmsSyncService] ⏭ Skipping sync tick — sync already in progress.');
+        return;
       }
-      final res = await syncReservations(propertyId: propertyId);
-      if (res.isSuccess) {
-        onSyncCompleted?.call();
+      try {
+        _syncCycleCounter++;
+        // Re-sync physical rooms every 10 cycles (~5 minutes)
+        if (_syncCycleCounter % 10 == 0) {
+          await syncPhysicalRooms(propertyId: propertyId)
+              .timeout(const Duration(seconds: 25));
+        }
+        final res = await syncReservations(propertyId: propertyId)
+            .timeout(const Duration(seconds: 25));
+        if (res.isSuccess) {
+          _lastSyncTime = DateTime.now();
+          lastSyncNotifier.value = _lastSyncTime;
+          onSyncCompleted?.call();
+        }
+      } catch (e) {
+        debugPrint('[PmsSyncService] ⚠️ Sync cycle error/timeout: $e');
       }
     });
   }
@@ -66,6 +94,8 @@ class PmsSyncService {
       _periodicTimer = null;
       debugPrint('[PmsSyncService] Auto-sync loop stopped.');
     }
+    _lastSeenModifiedAt.clear();
+    _lastSeenStatus.clear();
   }
 
   /// Ingests all physical rooms from PMS directly into Supabase `rooms` table.
@@ -140,6 +170,11 @@ class PmsSyncService {
   }
 
   /// Ingests live reservations from the hotel's configured PMS into Concigo Supabase.
+  ///
+  /// ROOT CAUSE FIX: Apaleo does NOT return CheckedOut reservations when no date window
+  /// is provided (it defaults to upcoming/active). We now always pass a date window and
+  /// do a separate targeted fetch for recent CheckedOut reservations (past 48 h) so that
+  /// PMS checkouts are never silently missed.
   Future<PmsSyncResult> syncReservations({
     required String propertyId,
     DateTime? from,
@@ -169,31 +204,113 @@ class PmsSyncService {
         '[PmsSyncService] Starting sync for hotel $propertyId using ${context.adapter.provider} (${context.propertyCode})...',
       );
 
+      // Always use a date window so Apaleo returns ALL statuses including CheckedOut.
+      // Without from/to, Apaleo defaults to upcoming/active only and silently omits
+      // reservations that were checked out today.
+      final now = DateTime.now();
+      final effectiveFrom = from ?? now.subtract(const Duration(days: 2));  // 2 days back
+      final effectiveTo = to ?? now.add(const Duration(days: 30));           // 30 days forward
+
+      // Primary fetch: all reservations in the stay window (Confirmed, InHouse, CheckedOut, Canceled)
       final reservations = await context.adapter.fetchReservations(
         propertyCode: context.propertyCode,
-        from: from,
-        to: to,
+        from: effectiveFrom,
+        to: effectiveTo,
+        dateFilter: 'Stay',
       );
 
-      debugPrint('[PmsSyncService] Fetched ${reservations.length} live reservations from PMS.');
+      // Secondary targeted fetch: recently modified reservations (past 48 h) that are CheckedOut.
+      List<CanonicalReservation> recentCheckouts = [];
+      try {
+        recentCheckouts = await context.adapter.fetchReservations(
+          propertyCode: context.propertyCode,
+          from: now.subtract(const Duration(hours: 48)),
+          to: now.add(const Duration(hours: 2)),
+          statuses: ['CheckedOut'],
+          dateFilter: 'Modification',
+        );
+        debugPrint('[PmsSyncService] Recent CheckedOut fetch: ${recentCheckouts.length} reservations.');
+      } catch (e) {
+        debugPrint('[PmsSyncService] Recent CheckedOut fetch (non-fatal): $e');
+      }
 
-      for (final res in reservations) {
+      // Tertiary targeted fetch: recently Canceled reservations (past 48 h).
+      // Apaleo excludes Canceled from the Stay date-filter by default, so we
+      // must explicitly request them via Modification filter to catch PMS cancellations.
+      List<CanonicalReservation> recentCancellations = [];
+      try {
+        recentCancellations = await context.adapter.fetchReservations(
+          propertyCode: context.propertyCode,
+          from: now.subtract(const Duration(hours: 48)),
+          to: now.add(const Duration(hours: 2)),
+          statuses: ['Canceled'],
+          dateFilter: 'Modification',
+        );
+        debugPrint('[PmsSyncService] Recent Canceled fetch: ${recentCancellations.length} reservations.');
+      } catch (e) {
+        debugPrint('[PmsSyncService] Recent Canceled fetch (non-fatal): $e');
+      }
+
+      // Merge: deduplicate by pmsReservationId (recentCheckouts + recentCancellations prioritized first
+      // so the latest PMS status wins over the primary Stay-window fetch)
+      final seen = <String>{};
+      final allReservations = <CanonicalReservation>[];
+      for (final r in [...recentCancellations, ...recentCheckouts, ...reservations]) {
+        if (seen.add(r.pmsReservationId)) {
+          allReservations.add(r);
+        }
+      }
+
+
+      debugPrint('[PmsSyncService] Fetched ${allReservations.length} total reservations from PMS (primary: ${reservations.length}, recent checkouts: ${recentCheckouts.length}).');
+
+      int skippedCount = 0;
+      for (final res in allReservations) {
         try {
+          // ── FAST PATH: skip if PMS reports nothing has changed since last cycle ──
+          // If pmsModifiedAt matches our cached value AND cached status is already Ended,
+          // there is guaranteed nothing to do — skip all 14+ DB queries for this reservation.
+          if (res.pmsModifiedAt != null && res.pmsReservationId.isNotEmpty) {
+            final cachedMod = _lastSeenModifiedAt[res.pmsReservationId];
+            final cachedStatus = _lastSeenStatus[res.pmsReservationId];
+            if (cachedMod != null &&
+                cachedMod.isAtSameMomentAs(res.pmsModifiedAt!) &&
+                cachedStatus == 'Ended') {
+              skippedCount++;
+              continue; // zero DB queries — reservation is already Ended and unchanged
+            }
+          }
+
           await _ingestSingleReservation(
             propertyId: propertyId,
             res: res,
           );
+
+          // Update cache after successful ingest
+          if (res.pmsReservationId.isNotEmpty) {
+            if (res.pmsModifiedAt != null) {
+              _lastSeenModifiedAt[res.pmsReservationId] = res.pmsModifiedAt!;
+            }
+            // Determine what status we wrote to Concigo
+            final concigoStatus = (res.status == 'Canceled' || res.status == 'CheckedOut')
+                ? 'Ended'
+                : (res.status == 'InHouse' ? 'Active' : 'Upcoming');
+            _lastSeenStatus[res.pmsReservationId] = concigoStatus;
+          }
           syncedCount++;
         } catch (e) {
           errorCount++;
           debugPrint('[PmsSyncService] Failed to ingest reservation ${res.bookingReference}: $e');
         }
       }
+      if (skippedCount > 0) {
+        debugPrint('[PmsSyncService] ⚡ Skipped $skippedCount unchanged/Ended reservations (cache hit).');
+      }
 
       _lastSyncTime = DateTime.now();
       return PmsSyncResult(
         isSuccess: true,
-        totalFetched: reservations.length,
+        totalFetched: allReservations.length,
         totalSynced: syncedCount,
         failedCount: errorCount,
       );
@@ -252,10 +369,15 @@ class PmsSyncService {
           final existingStayStatus = stayData?['status'] as String?;
           final linkedStayId = linkedReqList.first['stay_id'] as String?;
 
-          // If the stay linked to this PMS reservation was already Ended (checked out in Concigo),
-          // NEVER resurrect or recreate it!
+          // Guard 1: If Concigo stay is Ended and PMS is NOT Ended → prevent resurrection
           if (existingStayStatus == 'Ended' && stayStatus != 'Ended') {
             debugPrint('[PmsSyncService] Reservation ${res.pmsReservationId} was checked out in Concigo (Ended). Skipping resurrection.');
+            return;
+          }
+
+          // Guard 2 (fast path): If BOTH are Ended → stay already synced, skip expensive DB ops
+          if (existingStayStatus == 'Ended' && stayStatus == 'Ended') {
+            debugPrint('[PmsSyncService] Reservation ${res.pmsReservationId} already Ended in both PMS and Concigo. Skipping.');
             return;
           }
 
@@ -356,7 +478,7 @@ class PmsSyncService {
         if (guestUserId != null) 'main_user_id': guestUserId,
       }).eq('stay_id', stayId);
 
-      // If stay ended (checked out in PMS), release assigned room(s)
+      // If stay ended (checked out in PMS), release assigned room(s) and cascade cancel open service requests
       if (stayStatus == 'Ended') {
         final linkedStayRooms = await _client
             .from('stay_rooms')
@@ -365,15 +487,74 @@ class PmsSyncService {
         for (final sr in (linkedStayRooms as List)) {
           final rid = sr['room_id']?.toString();
           if (rid != null && rid.isNotEmpty) {
-            await _client.from('rooms').update({'is_booked': false}).eq('room_id', rid);
+            await _client.from('rooms').update({
+              'is_booked': false,
+            }).eq('room_id', rid);
           }
         }
+
+        // Void open service orders (food/beverage/amenities) so staff do not prepare for departed guests
+        try {
+          await _client
+              .from('service_orders')
+              .update({
+                'status': 'cancelled',
+                'updated_at': DateTime.now().toIso8601String(),
+              })
+              .eq('stay_id', stayId)
+              .inFilter('status', ['ordered', 'in_progress']);
+        } catch (_) {}
+
+        // Cancel open laundry pickup requests
+        try {
+          await _client
+              .from('laundry_requests')
+              .update({
+                'status': 'cancelled',
+                'updated_at': DateTime.now().toIso8601String(),
+              })
+              .eq('stay_id', stayId)
+              .inFilter('status', ['pending', 'assigned']);
+        } catch (_) {}
       }
     } else {
       // If the reservation is already Ended/CheckedOut in PMS and not in Concigo, do not create it
       if (stayStatus == 'Ended') {
         return;
       }
+
+      // Clean up orphan Upcoming stays for same guest+date that have NO checkin_request.
+      // These are phantom duplicates from earlier sync cycles before PMS-tag linking was in place.
+      // Without this, cancellations only fix the PMS-tagged stay but orphans keep showing in the UI.
+      if (guestUserId != null) {
+        try {
+          final orphanStays = await _client
+              .from('stay')
+              .select('stay_id')
+              .eq('hotel_id', propertyId)
+              .eq('main_user_id', guestUserId)
+              .eq('check_in_date', checkInStr)
+              .eq('status', 'Upcoming') as List;
+
+          for (final orphan in orphanStays) {
+            final orphanId = orphan['stay_id']?.toString();
+            if (orphanId == null) continue;
+            final crCheck = await _client
+                .from('checkin_requests')
+                .select('id')
+                .eq('stay_id', orphanId)
+                .limit(1) as List;
+            if (crCheck.isEmpty) {
+              // True orphan — no checkin_request, no PMS link → end it
+              await _client.from('stay').update({'status': 'Ended', 'updated_at': DateTime.now().toIso8601String()}).eq('stay_id', orphanId);
+              debugPrint('[PmsSyncService] Ended orphan duplicate stay $orphanId for guest $guestUserId on $checkInStr');
+            }
+          }
+        } catch (e) {
+          debugPrint('[PmsSyncService] Orphan cleanup (non-fatal): $e');
+        }
+      }
+
 
       // Insert new stay
       final insertData = <String, dynamic>{
@@ -415,9 +596,19 @@ class PmsSyncService {
             .limit(1) as List;
 
         if (existingCr.isNotEmpty) {
-          await _client.from('checkin_requests').update({
+          // FIX: also promote status to 'approved' when stay becomes Active (InHouse in PMS)
+          // Previously only 'remark' was updated — checkin_request stayed 'pending' forever
+          final crStatusUpdate = <String, dynamic>{
             'remark': pmsTag,
-          }).eq('id', existingCr.first['id']);
+          };
+          if (stayStatus == 'Active') {
+            crStatusUpdate['status'] = 'approved';
+          } else if (stayStatus == 'Ended') {
+            crStatusUpdate['status'] = 'cancelled';
+          }
+          await _client.from('checkin_requests')
+              .update(crStatusUpdate)
+              .eq('id', existingCr.first['id']);
         } else {
           // Always insert — resolve main_user_id from stay if guestUserId is null
           var effectiveUserId = guestUserId;

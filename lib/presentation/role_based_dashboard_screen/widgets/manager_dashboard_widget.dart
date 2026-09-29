@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:realtime_client/realtime_client.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../theme/app_theme.dart';
 import '../../../widgets/empty_state_widget.dart';
@@ -41,6 +43,11 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
   bool _isLoading = true;
   late AnimationController _entranceController;
   Timer? _autoRefreshTimer;
+  RealtimeChannel? _ordersChannel;
+  // Debounce timer: batches rapid realtime events into a single reload.
+  // Prevents the PMS sync (which may update many orders at once every 2 min)
+  // from triggering a full 7-query fetchManagerOrders() per row changed.
+  Timer? _realtimeDebounce;
 
   // Three categorized order lists
   List<Map<String, dynamic>> _newOrders = [];
@@ -48,6 +55,9 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
   List<Map<String, dynamic>> _allottedOrders = [];
 
   List<Map<String, dynamic>> _serviceEmployees = [];
+  // Pre-deduplicated employee list, computed once in _loadData() instead
+  // of re-running inside Builder on every frame for every allot card.
+  List<Map<String, dynamic>> _uniqueServiceEmployees = [];
 
   // orderId -> employeeId (for local UI state before save)
   final Map<String, String> _pendingAllotments = {};
@@ -62,11 +72,63 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
       duration: const Duration(milliseconds: 600),
     );
     _loadData();
-    // Auto-refresh every 60 seconds in background
+    // Realtime: instantly react to new/updated orders (INSERT/UPDATE on service_orders)
+    _subscribeToOrders();
+    // Fallback: auto-refresh every 2 min in case realtime misses an event.
+    // Interval is intentionally longer because realtime handles near-instant updates.
     _autoRefreshTimer = Timer.periodic(
-      const Duration(seconds: 60),
+      const Duration(seconds: 120),
       (_) => _loadData(isSilent: true),
     );
+  }
+
+  /// Debounced reload — collapses rapid bursts of realtime events into one
+  /// fetch. If multiple service_orders rows change within 3 s (e.g. PMS bulk
+  /// sync), only a single fetchManagerOrders() call is made.
+  void _scheduleDebouncedReload() {
+    _realtimeDebounce?.cancel();
+    _realtimeDebounce = Timer(
+      const Duration(seconds: 3),
+      () { if (mounted) _loadData(isSilent: true); },
+    );
+  }
+
+  /// Subscribe to service_orders changes for this property.
+  /// On any INSERT or UPDATE we schedule a debounced reload so rapid bursts
+  /// (e.g. PMS sync updating many rows at once) don't chain multiple heavy
+  /// fetchManagerOrders() calls.
+  void _subscribeToOrders() {
+    final client = SupabaseService.instance.client;
+    _ordersChannel = client
+        .channel('manager_orders_${widget.propertyId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'service_orders',
+          callback: (_) {
+            if (mounted) _scheduleDebouncedReload();
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'service_orders',
+          callback: (_) {
+            if (mounted) _scheduleDebouncedReload();
+          },
+        )
+        .subscribe((status, [error]) {
+          if (status == RealtimeSubscribeStatus.channelError ||
+              status == RealtimeSubscribeStatus.timedOut) {
+            Future.delayed(const Duration(seconds: 5), () {
+              if (mounted) {
+                _ordersChannel?.unsubscribe();
+                _ordersChannel = null;
+                _subscribeToOrders();
+              }
+            });
+          }
+        });
   }
 
   Future<void> _loadData({bool isSilent = false}) async {
@@ -94,6 +156,11 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
           _unallottedOrders = ordersMap['unallottedOrders'] ?? [];
           _allottedOrders = ordersMap['allottedOrders'] ?? [];
 
+          // P8 FIX: Clear stale pending allotments on every refresh so that
+          // a background reload never causes a stale dropdown selection to
+          // silently submit an outdated assignment.
+          _pendingAllotments.clear();
+
           // Filter to SERVICE_EMPLOYEE role only, same service dept as manager
           _serviceEmployees = allEmployees.where((e) {
             final isEmployee = e['role'] == 'SERVICE_EMPLOYEE';
@@ -104,6 +171,15 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                   e['service_dept']?.toString() == widget.serviceId;
             }
             return isEmployee && isActive;
+          }).toList();
+
+          // Deduplicate once here rather than inside Builder on every render frame
+          final seen = <String>{};
+          _uniqueServiceEmployees = _serviceEmployees.where((e) {
+            final id = e['emp_id']?.toString() ?? '';
+            if (id.isEmpty || seen.contains(id)) return false;
+            seen.add(id);
+            return true;
           }).toList();
 
           _isLoading = false;
@@ -123,9 +199,44 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
     }
   }
 
+  bool _isSweeping = false;
+
+  /// Sweeps open orders that belong to departed/non-active stays or vacant rooms.
+  /// Step 1: DB sweep marks them 'cancelled' at the source.
+  /// Step 2: Reload re-runs fetchManagerOrders() which already filters departed stays —
+  ///         so only valid active-guest orders remain. No blanket cancellation.
+  Future<void> _sweepDepartedOrders() async {
+    if (_isSweeping) return;
+    setState(() => _isSweeping = true);
+    try {
+      final count = await SupabaseService.instance.sweepDepartedOrders(widget.propertyId);
+      await _loadData();
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: count > 0 ? '$count departed orders cleared!' : 'No departed orders found',
+          backgroundColor: AppTheme.success,
+          textColor: Colors.white,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error clearing orders: $e',
+          backgroundColor: AppTheme.error,
+          textColor: Colors.white,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSweeping = false);
+    }
+  }
+
   @override
   void dispose() {
     _autoRefreshTimer?.cancel();
+    _realtimeDebounce?.cancel();
+    _ordersChannel?.unsubscribe();
+    _ordersChannel = null;
     _entranceController.dispose();
     super.dispose();
   }
@@ -310,6 +421,17 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 ),
               ),
               IconButton(
+                onPressed: _isSweeping ? null : _sweepDepartedOrders,
+                icon: _isSweeping
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.cleaning_services_rounded, color: Colors.white, size: 24),
+                tooltip: 'Clear Departed Orders',
+              ),
+              IconButton(
                 onPressed: () => _loadData(),
                 icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 28),
                 tooltip: 'Refresh Orders',
@@ -366,20 +488,47 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
               ),
             ),
             if (newCount > 0)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppTheme.errorContainer,
-                  borderRadius: BorderRadius.circular(100),
-                ),
-                child: Text(
-                  '$newCount pending',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.error,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppTheme.errorContainer,
+                      borderRadius: BorderRadius.circular(100),
+                    ),
+                    child: Text(
+                      '$newCount pending',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.error,
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  InkWell(
+                    onTap: _isSweeping ? null : _sweepDepartedOrders,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      child: Row(
+                        children: [
+                          Icon(Icons.cleaning_services_rounded, size: 14, color: AppTheme.error),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Clear All',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.error,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
           ],
         ),
@@ -466,10 +615,34 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 ),
               ],
             ),
-            IconButton(
-              onPressed: () => _loadData(),
-              icon: const Icon(Icons.refresh_rounded, size: 20),
-              tooltip: 'Refresh',
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_newOrders.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: _isSweeping ? null : _sweepDepartedOrders,
+                    icon: _isSweeping
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.error),
+                          )
+                        : const Icon(Icons.cleaning_services_rounded, size: 16, color: AppTheme.error),
+                    label: Text(
+                      'Clear All Departed',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.error,
+                      ),
+                    ),
+                  ),
+                IconButton(
+                  onPressed: () => _loadData(),
+                  icon: const Icon(Icons.refresh_rounded, size: 20),
+                  tooltip: 'Refresh',
+                ),
+              ],
             ),
           ],
         ),
@@ -614,6 +787,42 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 const SizedBox(width: 8),
                 _roomBadge(roomNumber, isPoolSide: isPoolSide),
                 const Spacer(),
+                // B7 FIX: Visual distinction between new (needs acceptance) vs reassignment
+                if (status == 'ordered') ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.warningContainer,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'Accept & Assign',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.warning,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ] else ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'Reassign',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.primary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
                 StatusBadgeWidget(
                   status: status == 'ordered'
                       ? BadgeStatus.pending
@@ -646,137 +855,120 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
             Row(
               children: [
                 Expanded(
-                  child: Builder(
-                    builder: (context) {
-                      final seen = <String>{};
-                      final uniqueEmployees = _serviceEmployees.where((e) {
-                        final id = e['emp_id']?.toString() ?? '';
-                        if (id.isEmpty || seen.contains(id)) return false;
-                        seen.add(id);
-                        return true;
-                      }).toList();
+                  // P1 FIX: Use pre-deduplicated list from state — no longer
+                  // computed inside Builder on every frame for every card.
+                  child: DropdownButtonFormField<String>(
+                    initialValue: (allottedEmpId != null &&
+                            _uniqueServiceEmployees.any(
+                              (e) => e['emp_id'] == allottedEmpId,
+                            ))
+                        ? allottedEmpId
+                        : null,
+                    hint: Text(
+                      _uniqueServiceEmployees.isEmpty
+                          ? 'No employees available'
+                          : 'Assign to employee',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        color: AppTheme.onSurfaceMuted,
+                      ),
+                    ),
+                    onChanged: _uniqueServiceEmployees.isEmpty
+                        ? null
+                        : (empId) async {
+                            if (empId == null) return;
+                            final emp = _uniqueServiceEmployees.firstWhere(
+                              (e) => e['emp_id'] == empId,
+                              orElse: () => {},
+                            );
+                            if (emp.isEmpty) return;
 
-                      final validInitialValue = (allottedEmpId != null &&
-                              uniqueEmployees.any((e) => e['emp_id'] == allottedEmpId))
-                          ? allottedEmpId
-                          : null;
-
-                      return DropdownButtonFormField<String>(
-                        initialValue: validInitialValue,
-                        hint: Text(
-                          uniqueEmployees.isEmpty
-                              ? 'No employees available'
-                              : 'Assign to employee',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 13,
-                            color: AppTheme.onSurfaceMuted,
-                          ),
+                            // B2 FIX: Removed pre-accept block here.
+                            // createOrderAllotment internally calls updateOrderStatus('in_progress'),
+                            // so calling it twice caused a redundant DB write.
+                            try {
+                              final resolvedRoomId =
+                                  order['resolved_room_id'] as String? ??
+                                      (order['room_id'] as String? ?? '');
+                              final session =
+                                  SupabaseService.instance.currentSession;
+                              await SupabaseService.instance.createOrderAllotment(
+                                orderId: orderId,
+                                employeeId: empId,
+                                alloterEmployeeId: session?.empId ?? empId,
+                                roomId: resolvedRoomId,
+                                roomNumber: roomNumber,
+                                orderPrice: amount,
+                              );
+                              setState(() => _pendingAllotments[orderId] = empId);
+                              Fluttertoast.showToast(
+                                msg: 'Order assigned to ${emp['full_name']}',
+                                backgroundColor: AppTheme.success,
+                                textColor: Colors.white,
+                              );
+                              _loadData(isSilent: true);
+                            } catch (e) {
+                              Fluttertoast.showToast(
+                                msg: 'Failed to assign: $e',
+                                backgroundColor: AppTheme.error,
+                                textColor: Colors.white,
+                              );
+                            }
+                          },
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: AppTheme.surfaceVariant,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: AppTheme.outline),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(
+                          color: AppTheme.managerColor,
+                          width: 2,
                         ),
-                        onChanged: uniqueEmployees.isEmpty
-                            ? null
-                            : (empId) async {
-                                if (empId == null) return;
-                                final emp = uniqueEmployees.firstWhere(
-                                  (e) => e['emp_id'] == empId,
-                                  orElse: () => {},
-                                );
-                                if (emp.isEmpty) return;
-
-                                // If order is still 'ordered', accept it first
-                                if (status == 'ordered') {
-                                  try {
-                                    await SupabaseService.instance.updateOrderStatus(
-                                      orderId,
-                                      'in_progress',
-                                    );
-                                  } catch (_) {}
-                                }
-
-                                try {
-                                  final resolvedRoomId =
-                                      order['resolved_room_id'] as String? ??
-                                          (order['room_id'] as String? ?? '');
-                                  final session =
-                                      SupabaseService.instance.currentSession;
-                                  await SupabaseService.instance.createOrderAllotment(
-                                    orderId: orderId,
-                                    employeeId: empId,
-                                    alloterEmployeeId: session?.empId ?? empId,
-                                    roomId: resolvedRoomId,
-                                    roomNumber: roomNumber,
-                                    orderPrice: amount,
-                                  );
-                                  setState(() => _pendingAllotments[orderId] = empId);
-                                  Fluttertoast.showToast(
-                                    msg: 'Order assigned to ${emp['full_name']}',
-                                    backgroundColor: AppTheme.success,
-                                    textColor: Colors.white,
-                                  );
-                                  _loadData(isSilent: true);
-                                } catch (e) {
-                                  Fluttertoast.showToast(
-                                    msg: 'Failed to assign: $e',
-                                    backgroundColor: AppTheme.error,
-                                    textColor: Colors.white,
-                                  );
-                                }
-                              },
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: AppTheme.surfaceVariant,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: const BorderSide(color: AppTheme.outline),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: const BorderSide(
-                              color: AppTheme.managerColor,
-                              width: 2,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                    ),
+                    items: _uniqueServiceEmployees.map((emp) {
+                      final empId = emp['emp_id']?.toString() ?? '';
+                      final isActive = emp['is_active'] == true;
+                      final name = emp['full_name'] as String? ?? 'Employee';
+                      return DropdownMenuItem<String>(
+                        value: empId,
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: isActive ? AppTheme.success : AppTheme.warning,
+                              ),
                             ),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 10,
-                          ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                name,
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
-                        items: uniqueEmployees.map((emp) {
-                          final empId = emp['emp_id']?.toString() ?? '';
-                          final isActive = emp['is_active'] == true;
-                          final name = emp['full_name'] as String? ?? 'Employee';
-                          return DropdownMenuItem<String>(
-                            value: empId,
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 8,
-                                  height: 8,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: isActive ? AppTheme.success : AppTheme.warning,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    name,
-                                    style: GoogleFonts.plusJakartaSans(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }).toList(),
                       );
-                    },
+                    }).toList(),
                   ),
                 ),
                 const SizedBox(width: 8),

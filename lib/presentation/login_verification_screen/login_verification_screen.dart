@@ -222,6 +222,19 @@ class _LoginVerificationScreenState extends State<LoginVerificationScreen>
         return;
       }
 
+      // S2 FIX: Explicit guard — ensure employee is active even if DB filter
+      // behaved unexpectedly (e.g., RLS policy change or stale cache).
+      if (employee['is_active'] != true) {
+        setState(() => _isVerifying = false);
+        Fluttertoast.showToast(
+          msg: 'Your account has been deactivated. Please contact your administrator.',
+          backgroundColor: AppTheme.error,
+          textColor: Colors.white,
+          toastLength: Toast.LENGTH_LONG,
+        );
+        return;
+      }
+
       // Step 3: Extract property name from joined data
       final propertyData = employee['hotel_property'] as Map<String, dynamic>?;
       final propertyName = propertyData?['name'] as String? ?? '';

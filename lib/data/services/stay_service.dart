@@ -328,6 +328,25 @@ class StayService {
     }
     await _supabaseService.checkoutStay(stayId, validRoomIds);
 
+    // Order cascade: Cancel/close open service orders for this departing stay
+    int cancelledOrders = 0;
+    int closedOrders = 0;
+    double unclearedCharges = 0.0;
+    try {
+      final orderCascade = await _supabaseService.cancelOpenOrdersForStay(
+        stayId,
+        roomIds: validRoomIds,
+      );
+      cancelledOrders = (orderCascade['cancelled'] as num?)?.toInt() ?? 0;
+      closedOrders = (orderCascade['closed'] as num?)?.toInt() ?? 0;
+      unclearedCharges = (orderCascade['uncleared'] as num?)?.toDouble() ?? 0.0;
+      debugPrint(
+        '[StayService] Checkout order cascade: $cancelledOrders cancelled, $closedOrders closed, ₹$unclearedCharges uncleared',
+      );
+    } catch (e) {
+      debugPrint('[StayService] Order cascade failed (non-fatal): $e');
+    }
+
     // 2-Way PMS synchronization: Check out in Apaleo if linked
     bool pmsSyncOk = true;
     String? pmsSyncError;
@@ -423,7 +442,14 @@ class StayService {
     }
 
 
-    return CheckoutResult(localSuccess: true, pmsSynced: pmsSyncOk, pmsWarning: pmsSyncError);
+    return CheckoutResult(
+      localSuccess: true,
+      pmsSynced: pmsSyncOk,
+      pmsWarning: pmsSyncError,
+      cancelledOrderCount: cancelledOrders,
+      closedOrderCount: closedOrders,
+      unclearedCharges: unclearedCharges,
+    );
   }
 }
 
@@ -432,10 +458,16 @@ class CheckoutResult {
   final bool localSuccess;
   final bool pmsSynced;
   final String? pmsWarning;
+  final int cancelledOrderCount;
+  final int closedOrderCount;
+  final double unclearedCharges;
 
   const CheckoutResult({
     required this.localSuccess,
     required this.pmsSynced,
     this.pmsWarning,
+    this.cancelledOrderCount = 0,
+    this.closedOrderCount = 0,
+    this.unclearedCharges = 0.0,
   });
 }

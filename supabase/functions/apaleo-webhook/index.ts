@@ -40,7 +40,23 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true, note: 'no reservation id' }), { status: 200 })
     }
 
+    // Fast-path: if topic explicitly signals cancellation, handle immediately
+    // without needing to re-fetch the reservation from Apaleo.
+    // This prevents silent misses when the subsequent API call fails.
+    const topicSignalsCancellation = topic === 'Reservations/Cancelled' ||
+      topic === 'reservations/cancelled' ||
+      topic === 'Reservations/NoShow' ||
+      topic === 'reservations/no-show'
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+    // If topic already tells us it's a cancellation, act immediately —
+    // don't wait for the Apaleo API re-fetch (which may fail or be stale).
+    if (topicSignalsCancellation) {
+      await handleCancellation(supabase, reservationId, 'b0000001-0000-0000-0000-000000000001')
+      console.log(`[apaleo-webhook] Fast-path cancellation for ${reservationId} (topic: ${topic})`)
+      return new Response(JSON.stringify({ ok: true, action: 'cancelled_fast_path' }), { status: 200 })
+    }
 
     // Get current token from pms_tokens
     const { data: tokenRow } = await supabase
@@ -80,7 +96,8 @@ serve(async (req) => {
     // Handle cancellation/no-show by marking stay as Ended
     const status = (reservation.status as string) ?? ''
     if (status === 'Canceled' || status === 'NoShow') {
-      await handleCancellation(supabase, reservationId, supabasePropertyId)
+      // Pass the full reservation so handleCancellation can use arrival date as fallback
+      await handleCancellation(supabase, reservationId, supabasePropertyId, reservation)
       return new Response(JSON.stringify({ ok: true, action: 'cancelled' }), { status: 200 })
     }
 
@@ -116,20 +133,100 @@ async function getValidToken(supabase: ReturnType<typeof createClient>, row: Rec
   return data.access_token
 }
 
-async function handleCancellation(supabase: ReturnType<typeof createClient>, reservationId: string, propertyId: string) {
+async function handleCancellation(supabase: ReturnType<typeof createClient>, reservationId: string, propertyId: string, reservationData?: Record<string, unknown>) {
   const pmsTag = `PMS:${reservationId}`
+
+  // Strategy 1: Find stay via checkin_requests PMS tag (fast, most reliable)
+  let stayId: string | null = null
   const { data: cr } = await supabase.from('checkin_requests').select('stay_id').eq('remark', pmsTag).limit(1)
   if (cr?.length) {
-    const stayId = cr[0].stay_id
-    await supabase.from('stay').update({ status: 'Ended', updated_at: new Date().toISOString() }).eq('stay_id', stayId)
-    const { data: stayRooms } = await supabase.from('stay_rooms').select('room_id').eq('stay_id', stayId)
-    for (const sr of stayRooms ?? []) {
-      await supabase.from('rooms').update({ is_booked: false, updated_at: new Date().toISOString() }).eq('room_id', sr.room_id)
-    }
-    // Mark any outstanding service_bills as paid
-    await supabase.from('service_bills').update({ payment_status: 'paid', updated_at: new Date().toISOString() }).eq('stay_id', stayId).eq('payment_status', 'unpaid')
-    console.log(`[apaleo-webhook] Stay ${stayId} marked Ended (cancelled)`)
+    stayId = cr[0].stay_id as string
   }
+
+  // Strategy 2: If no PMS tag found, find by hotel + arrival date from reservation data
+  if (!stayId && reservationData) {
+    try {
+      const arrival = (reservationData.arrival as string ?? '').split('T')[0]
+      if (arrival && propertyId) {
+        const { data: stayRows } = await supabase.from('stay')
+          .select('stay_id')
+          .eq('hotel_id', propertyId)
+          .eq('check_in_date', arrival)
+          .in('status', ['Upcoming', 'Active'])
+          .limit(1)
+        if (stayRows?.length) {
+          stayId = stayRows[0].stay_id as string
+          console.log(`[apaleo-webhook] handleCancellation: found stay via date fallback — stay_id=${stayId}`)
+        }
+      }
+    } catch (e) {
+      console.warn('[apaleo-webhook] handleCancellation: date-fallback lookup failed:', e)
+    }
+  }
+
+  // Strategy 3: Scan all Upcoming/Active stays for this property and mark any matching the PMS reservation_id in their checkin_request
+  if (!stayId) {
+    try {
+      const { data: upcomingStays } = await supabase.from('stay')
+        .select('stay_id')
+        .eq('hotel_id', propertyId)
+        .in('status', ['Upcoming', 'Active'])
+      if (upcomingStays?.length) {
+        const ids = upcomingStays.map((s: Record<string, unknown>) => s.stay_id as string)
+        const { data: matchedCr } = await supabase.from('checkin_requests')
+          .select('stay_id').in('stay_id', ids).eq('remark', pmsTag).limit(1)
+        if (matchedCr?.length) stayId = matchedCr[0].stay_id as string
+      }
+    } catch (e) {
+      console.warn('[apaleo-webhook] handleCancellation: broad scan failed:', e)
+    }
+  }
+
+  if (!stayId) {
+    console.warn(`[apaleo-webhook] handleCancellation: no stay found for ${pmsTag} — cancellation cannot be applied`)
+    return
+  }
+
+  // 1. Mark stay as Ended
+  await supabase.from('stay')
+    .update({ status: 'Ended', updated_at: new Date().toISOString() })
+    .eq('stay_id', stayId)
+
+  // 2. Release assigned rooms
+  const { data: stayRooms } = await supabase.from('stay_rooms').select('room_id').eq('stay_id', stayId)
+  for (const sr of stayRooms ?? []) {
+    await supabase.from('rooms')
+      .update({ is_booked: false, updated_at: new Date().toISOString() })
+      .eq('room_id', sr.room_id)
+  }
+
+  // 3. Void unpaid service bills — NOT 'paid', the stay was CANCELLED, no money collected
+  await supabase.from('service_bills')
+    .update({ payment_status: 'voided', updated_at: new Date().toISOString() })
+    .eq('stay_id', stayId)
+    .eq('payment_status', 'unpaid')
+
+  // 4. Cancel open service orders (food/beverage/amenities)
+  try {
+    await supabase.from('service_orders')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('stay_id', stayId)
+      .in('status', ['ordered', 'in_progress'])
+  } catch (e) {
+    console.warn(`[apaleo-webhook] service_orders cancel error for ${stayId}:`, e)
+  }
+
+  // 5. Cancel open laundry requests
+  try {
+    await supabase.from('laundry_requests')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('stay_id', stayId)
+      .in('status', ['pending', 'assigned'])
+  } catch (e) {
+    console.warn(`[apaleo-webhook] laundry_requests cancel error for ${stayId}:`, e)
+  }
+
+  console.log(`[apaleo-webhook] Stay ${stayId} fully cancelled (Ended, rooms released, orders voided)`)
 }
 
 async function ingestReservation(
@@ -176,6 +273,16 @@ async function ingestReservation(
     const { data: curr } = await supabase.from('stay').select('status').eq('stay_id', stayId).maybeSingle()
     const effectiveStatus = (curr?.status === 'Active' && stayStatus !== 'Ended') ? 'Active' : stayStatus
     await supabase.from('stay').update({ check_out_date: checkOutStr, status: effectiveStatus, updated_at: new Date().toISOString(), ...(guestUserId ? { main_user_id: guestUserId } : {}) }).eq('stay_id', stayId)
+
+    if (effectiveStatus === 'Ended') {
+      await supabase.from('stay_guests').update({ status: 'Ended', updated_at: new Date().toISOString() }).eq('stay_id', stayId)
+      const { data: sRooms } = await supabase.from('stay_rooms').select('room_id').eq('stay_id', stayId)
+      for (const sr of sRooms ?? []) {
+        if (sr.room_id) {
+          await supabase.from('rooms').update({ is_booked: false, updated_at: new Date().toISOString() }).eq('room_id', sr.room_id)
+        }
+      }
+    }
   } else {
     const { data: newStay, error } = await supabase.from('stay')
       .insert({ hotel_id: propertyId, check_in_date: checkInStr, check_out_date: checkOutStr, status: stayStatus, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...(guestUserId ? { main_user_id: guestUserId } : {}) })
@@ -193,15 +300,24 @@ async function ingestReservation(
     }
   }
 
-  // Ensure checkin_request
+  // Ensure checkin_request — and keep its status in sync with stay status
   if (resId && stayId && guestUserId) {
-    const { data: existing } = await supabase.from('checkin_requests').select('id, remark').eq('stay_id', stayId).limit(1)
+    const { data: existing } = await supabase.from('checkin_requests').select('id, remark, status').eq('stay_id', stayId).limit(1)
     if (existing?.length) {
-      if (existing[0].remark !== pmsTag) await supabase.from('checkin_requests').update({ remark: pmsTag, updated_at: new Date().toISOString() }).eq('id', existing[0].id)
+      // FIX: always sync status when stay transitions (Upcoming→Active on checkin, Active→Ended on checkout)
+      // Previously only remark was updated — checkin_request stayed 'pending' after PMS check-in
+      const crUpdate: Record<string, unknown> = { updated_at: new Date().toISOString() }
+      if (existing[0].remark !== pmsTag) crUpdate.remark = pmsTag
+      if (stayStatus === 'Active' && existing[0].status !== 'approved') crUpdate.status = 'approved'
+      if (stayStatus === 'Ended' && existing[0].status !== 'cancelled') crUpdate.status = 'cancelled'
+      if (Object.keys(crUpdate).length > 1) { // more than just updated_at
+        await supabase.from('checkin_requests').update(crUpdate).eq('id', existing[0].id)
+      }
     } else {
       await supabase.from('checkin_requests').insert({ stay_id: stayId, main_user_id: guestUserId, status: stayStatus === 'Active' ? 'approved' : 'pending', checkin_code: String(1000 + (Date.now() % 9000)), remark: pmsTag, submitted_req: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     }
   }
+
 
   // Link room
   if (assignedRoom && stayId) {

@@ -167,7 +167,7 @@ async function fetchReservations(
   propertyCode: string
 ): Promise<{ reservations: Record<string, unknown>[]; token: string }> {
   let currentToken = initialToken
-  const statuses = ['Confirmed', 'InHouse', 'Reserved', 'Canceled']
+  const statuses = ['Confirmed', 'InHouse', 'Reserved', 'Canceled', 'CheckedOut']
   const allReservations: Record<string, unknown>[] = []
 
   for (const status of statuses) {

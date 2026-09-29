@@ -355,15 +355,46 @@ class SupabaseService {
       final jsonStr = prefs.getString(_sessionStorageKey);
       if (jsonStr != null && jsonStr.isNotEmpty) {
         final map = jsonDecode(jsonStr) as Map<String, dynamic>;
-        currentSession = EmployeeSession.fromJson(map);
+        final session = EmployeeSession.fromJson(map);
+        // S3: Re-validate persisted session against DB to catch deactivated employees
+        final isValid = await _validateSession(session);
+        if (!isValid) {
+          await clearSession();
+          return null;
+        }
+        currentSession = session;
         return currentSession;
       }
     } catch (_) {}
     return null;
   }
 
+  /// S3: Re-validates a persisted session against the DB.
+  /// Returns false if the employee is no longer active or soft-deleted.
+  /// Fails open (returns true) on network errors to not block offline use.
+  Future<bool> _validateSession(EmployeeSession session) async {
+    if (session.empId.isEmpty) return false;
+    try {
+      final row = await client
+          .from('property_employees')
+          .select('emp_id')
+          .eq('emp_id', session.empId)
+          .eq('is_active', true)
+          .isFilter('deleted_at', null)
+          .maybeSingle();
+      return row != null;
+    } catch (_) {
+      // Fail open — allow session if DB unreachable (offline / network error)
+      return true;
+    }
+  }
+
   Future<void> clearSession() async {
     currentSession = null;
+    // S1: Invalidate Supabase auth JWT so the token cannot be reused after logout
+    try {
+      await client.auth.signOut();
+    } catch (_) {} // Non-fatal: token may already be expired
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_sessionStorageKey);
@@ -388,7 +419,9 @@ class SupabaseService {
       final list = List<Map<String, dynamic>>.from(response);
       for (final map in list) {
         final isBooked = map['is_booked'] == true;
-        map['status'] = isBooked ? 'OCCUPIED' : 'VACANT';
+        // B5: Use lowercase status strings to match liveDeskKpiProvider comparisons
+        // ('occupied', 'cleaning', 'maintenance', 'vacant' — all lowercase)
+        map['status'] = isBooked ? 'occupied' : 'vacant';
       }
       return list;
     } on PostgrestException catch (e) {
@@ -1126,12 +1159,104 @@ class SupabaseService {
     }
   }
 
+  /// Fetches open service orders for a stay (status: ordered or in_progress).
+  /// Matches by stay_id OR any of the given roomIds.
+  Future<List<Map<String, dynamic>>> fetchOpenOrdersForStay(
+    String stayId, {
+    List<String>? roomIds,
+  }) async {
+    try {
+      final validRoomIds = (roomIds ?? [])
+          .where((r) => r.trim().isNotEmpty && r != 'null' && r != 'N/A')
+          .toList();
+
+      var query = client
+          .from('service_orders')
+          .select(
+            'so_id, status, so_total, order_type, services(name), service_order_items(item_name, qty, item_sp)',
+          )
+          .inFilter('status', ['ordered', 'in_progress']);
+
+      if (validRoomIds.isNotEmpty) {
+        final roomFilter = 'room_id.in.(${validRoomIds.join(",")})';
+        query = query.or('stay_id.eq.$stayId,$roomFilter');
+      } else {
+        query = query.eq('stay_id', stayId);
+      }
+
+      final response = await query;
+      return List<Map<String, dynamic>>.from(response as List);
+    } catch (e) {
+      debugPrint('[SupabaseService] fetchOpenOrdersForStay error: $e');
+      return [];
+    }
+  }
+
+  /// Cascades open service orders for a departing stay:
+  /// - 'ordered' → 'checkout_cancelled' (never accepted, auto-voided)
+  /// - 'in_progress' → 'checkout_closed' (in preparation, closed & flagged for billing review)
+  /// Returns a map with summary tallies: { 'cancelled': N, 'closed': M, 'uncleared': ₹X }
+  Future<Map<String, dynamic>> cancelOpenOrdersForStay(
+    String stayId, {
+    List<String>? roomIds,
+  }) async {
+    try {
+      final orders = await fetchOpenOrdersForStay(stayId, roomIds: roomIds);
+      int cancelled = 0;
+      int closed = 0;
+      double uncleared = 0.0;
+
+      for (final order in orders) {
+        final soId = order['so_id']?.toString();
+        if (soId == null || soId.isEmpty) continue;
+        final status = (order['status'] as String? ?? 'ordered').toLowerCase();
+        final total = (order['so_total'] as num?)?.toDouble() ?? 0.0;
+        const newStatus = 'cancelled';
+
+        try {
+          await client
+              .from('service_orders')
+              .update({
+                'status': newStatus,
+                'updated_at': DateTime.now().toIso8601String(),
+              })
+              .eq('so_id', soId);
+
+          if (status == 'ordered') {
+            cancelled++;
+          } else {
+            closed++;
+          }
+          uncleared += total;
+        } catch (updateErr) {
+          debugPrint('[SupabaseService] Failed to cascade order $soId: $updateErr');
+        }
+      }
+
+      return {
+        'cancelled': cancelled,
+        'closed': closed,
+        'uncleared': uncleared,
+      };
+    } catch (e) {
+      debugPrint('[SupabaseService] cancelOpenOrdersForStay error: $e');
+      return {
+        'cancelled': 0,
+        'closed': 0,
+        'uncleared': 0.0,
+      };
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // SERVICE ORDERS
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Fetch service orders for a property, optionally filtered by service dept
-  /// Returns normalized maps with keys: so_id, room_number, floor, status, so_total, order_type, created_at, serv_name, user_phone_no
+  /// Fetch service orders for a property, optionally filtered by service dept.
+  /// Uses an OR filter (room_id OR stay_id) to capture all orders for this
+  /// property — including orders placed via stay_id where room_id is null.
+  /// Returns normalized maps with keys: so_id, room_number, floor, status,
+  /// so_total, order_type, created_at, serv_name, user_phone_no
   Future<List<Map<String, dynamic>>> fetchServiceOrders({
     required String propertyId,
     String? serviceDeptId,
@@ -1151,13 +1276,30 @@ class SupabaseService {
 
       if (roomIds.isEmpty) return [];
 
+      // Also resolve stay IDs for this property so we catch orders placed
+      // via stay_id where room_id is null (e.g. pool-side or stay-linked orders)
+      final stayRoomsRaw = await client
+          .from('stay_rooms')
+          .select('stay_id')
+          .inFilter('room_id', roomIds);
+      final propertyStayIds = (stayRoomsRaw as List)
+          .map((sr) => sr['stay_id'] as String)
+          .toSet()
+          .toList();
+
       var query = client
           .from('service_orders')
           .select(
             'so_id, serv_id, stay_id, room_id, so_total, status, created_at, updated_at, order_type, user_phone_no, rooms(room_number, floor), services(name)',
-          )
-          .inFilter('room_id', roomIds);
+          );
       // NOTE: service_orders does NOT have a deleted_at column — do not add isFilter
+
+      // Scope to this property: match by room_id OR by stay_id
+      final roomFilter = 'room_id.in.(${roomIds.join(",")})';
+      final stayFilter = propertyStayIds.isNotEmpty
+          ? ',stay_id.in.(${propertyStayIds.join(",")})'
+          : '';
+      query = query.or('$roomFilter$stayFilter');
 
       if (serviceDeptId != null && serviceDeptId.isNotEmpty) {
         query = query.eq('serv_id', serviceDeptId);
@@ -1183,13 +1325,48 @@ class SupabaseService {
     String? serviceDeptId,
   }) async {
     try {
-      // Step 1: Fetch all relevant orders (status = ordered OR in_progress)
+      // B1 FIX — Step 0: Scope to property by pre-fetching its room IDs and booked statuses.
+      // Without this, ALL orders from ALL hotels would be returned.
+      final propertyRoomsRaw = await client
+          .from('rooms')
+          .select('room_id, is_booked')
+          .eq('property_id', propertyId);
+      final propertyRoomIds = (propertyRoomsRaw as List)
+          .map((r) => r['room_id'] as String)
+          .toList();
+      final bookedRoomIds = (propertyRoomsRaw as List)
+          .where((r) => r['is_booked'] == true)
+          .map((r) => r['room_id'] as String)
+          .toSet();
+
+      if (propertyRoomIds.isEmpty) {
+        return {'newOrders': [], 'unallottedOrders': [], 'allottedOrders': []};
+      }
+
+      // Also resolve stay IDs for this property (orders that use stay_id instead of room_id)
+      final stayRoomsForPropRaw = await client
+          .from('stay_rooms')
+          .select('stay_id')
+          .inFilter('room_id', propertyRoomIds);
+      final propertyStayIds = (stayRoomsForPropRaw as List)
+          .map((sr) => sr['stay_id'] as String)
+          .toSet()
+          .toList();
+
+      // Step 1: Fetch all relevant orders scoped to this property
       var query = client
           .from('service_orders')
           .select(
             'so_id, serv_id, stay_id, room_id, delivery_location, so_total, status, created_at, updated_at, order_type, user_phone_no, services(name), service_order_items(soi_id, item_name, qty, item_sp, cost)',
           )
           .inFilter('status', ['ordered', 'in_progress']);
+
+      // Apply property scope: match orders by room_id OR stay_id belonging to this property
+      final roomFilter = 'room_id.in.(${propertyRoomIds.join(",")})';
+      final stayFilter = propertyStayIds.isNotEmpty
+          ? ',stay_id.in.(${propertyStayIds.join(",")})'
+          : '';
+      query = query.or('$roomFilter$stayFilter');
 
       if (serviceDeptId != null && serviceDeptId.isNotEmpty) {
         query = query.eq('serv_id', serviceDeptId);
@@ -1202,7 +1379,7 @@ class SupabaseService {
         return {'newOrders': [], 'unallottedOrders': [], 'allottedOrders': []};
       }
 
-      // Step 2: Collect all unique stay_ids and room_ids from orders
+      // Step 2: Collect all unique stay_ids from orders
       final stayIds = orders
           .map((o) => o['stay_id'] as String?)
           .where((id) => id != null)
@@ -1210,13 +1387,87 @@ class SupabaseService {
           .cast<String>()
           .toList();
 
+      // Guard: fetch stay statuses to filter out any orders belonging to non-Active stays
+      final activeStayIds = <String>{};
+      final endedStayIds = <String>{};
+      if (stayIds.isNotEmpty) {
+        try {
+          final staysRaw = await client
+              .from('stay')
+              .select('stay_id, status')
+              .inFilter('stay_id', stayIds);
+          for (final s in (staysRaw as List)) {
+            final st = (s['status'] as String? ?? '').toLowerCase();
+            if (st == 'active') {
+              activeStayIds.add(s['stay_id'] as String);
+            } else {
+              endedStayIds.add(s['stay_id'] as String);
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Filter out orders for ended stays, inactive stays, or unbooked rooms
+      final activeOrders = <Map<String, dynamic>>[];
+      final staleOrderIds = <String>[];
+
+      for (final o in orders) {
+        final sid = o['stay_id'] as String?;
+        final rid = o['room_id'] as String?;
+        final soId = o['so_id'] as String?;
+        final orderType = o['order_type'] as String?;
+        final isPoolSide = orderType == 'pool_side';
+
+        bool isStale = false;
+        if (sid != null) {
+          if (endedStayIds.contains(sid) || !activeStayIds.contains(sid)) {
+            isStale = true;
+          }
+        } else if (!isPoolSide && rid != null && !bookedRoomIds.contains(rid)) {
+          isStale = true;
+        }
+
+        if (isStale) {
+          if (soId != null) staleOrderIds.add(soId);
+        } else {
+          activeOrders.add(o);
+        }
+      }
+
+      // Asynchronously cancel stale departed orders in DB so they don't linger
+      if (staleOrderIds.isNotEmpty) {
+        client
+            .from('service_orders')
+            .update({
+              'status': 'cancelled',
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .inFilter('so_id', staleOrderIds)
+            .then((_) {
+              debugPrint('[SupabaseService] Auto-cleaned ${staleOrderIds.length} departed orders');
+            })
+            .catchError((err) {
+              debugPrint('[SupabaseService] Error auto-cleaning departed orders: $err');
+            });
+      }
+
+      if (activeOrders.isEmpty) {
+        return {'newOrders': [], 'unallottedOrders': [], 'allottedOrders': []};
+      }
+
       // Step 3: Fetch stay_rooms to get room_id per stay_id
       Map<String, String> stayToRoomId = {};
-      if (stayIds.isNotEmpty) {
+      final activeStayIdsFromOrders = activeOrders
+          .map((o) => o['stay_id'] as String?)
+          .where((id) => id != null)
+          .toSet()
+          .cast<String>()
+          .toList();
+      if (activeStayIdsFromOrders.isNotEmpty) {
         final stayRoomsRaw = await client
             .from('stay_rooms')
             .select('stay_id, room_id')
-            .inFilter('stay_id', stayIds);
+            .inFilter('stay_id', activeStayIdsFromOrders);
         for (final sr in stayRoomsRaw as List) {
           final sid = sr['stay_id'] as String?;
           final rid = sr['room_id'] as String?;
@@ -1228,7 +1479,7 @@ class SupabaseService {
 
       // Step 4: Collect all room_ids (from direct room_id on order + stay_rooms)
       final allRoomIds = <String>{};
-      for (final o in orders) {
+      for (final o in activeOrders) {
         final stayId = o['stay_id'] as String?;
         final directRoomId = o['room_id'] as String?;
         if (directRoomId != null && directRoomId.isNotEmpty) {
@@ -1255,7 +1506,7 @@ class SupabaseService {
       }
 
       // Step 6: Fetch all order_allotments for in_progress orders
-      final inProgressIds = orders
+      final inProgressIds = activeOrders
           .where((o) => o['status'] == 'in_progress')
           .map((o) => o['so_id'] as String)
           .toList();
@@ -1282,7 +1533,7 @@ class SupabaseService {
       List<Map<String, dynamic>> unallottedOrders = [];
       List<Map<String, dynamic>> allottedOrders = [];
 
-      for (final o in orders) {
+      for (final o in activeOrders) {
         final soId = o['so_id'] as String;
         final stayId = o['stay_id'] as String?;
         final directRoomId = o['room_id'] as String?;
@@ -1369,6 +1620,107 @@ class SupabaseService {
       }
     } on PostgrestException catch (e) {
       throw Exception('Failed to update order status: ${e.message}');
+    }
+  }
+
+  /// Sweeps and cancels all open service orders for a property whose stay is Ended or whose room is vacant/unbooked
+  Future<int> sweepDepartedOrders(String propertyId) async {
+    try {
+      final propertyRoomsRaw = await client
+          .from('rooms')
+          .select('room_id, is_booked')
+          .eq('property_id', propertyId);
+      final propertyRoomIds = (propertyRoomsRaw as List)
+          .map((r) => r['room_id'] as String)
+          .toList();
+      final bookedRoomIds = (propertyRoomsRaw as List)
+          .where((r) => r['is_booked'] == true)
+          .map((r) => r['room_id'] as String)
+          .toSet();
+
+      if (propertyRoomIds.isEmpty) return 0;
+
+      final stayRoomsForPropRaw = await client
+          .from('stay_rooms')
+          .select('stay_id')
+          .inFilter('room_id', propertyRoomIds);
+      final propertyStayIds = (stayRoomsForPropRaw as List)
+          .map((sr) => sr['stay_id'] as String)
+          .toSet()
+          .toList();
+
+      var query = client
+          .from('service_orders')
+          .select('so_id, stay_id, room_id, order_type')
+          .inFilter('status', ['ordered', 'in_progress']);
+
+      final roomFilter = 'room_id.in.(${propertyRoomIds.join(",")})';
+      final stayFilter = propertyStayIds.isNotEmpty
+          ? ',stay_id.in.(${propertyStayIds.join(",")})'
+          : '';
+      query = query.or('$roomFilter$stayFilter');
+
+      final ordersRaw = await query;
+      final orders = List<Map<String, dynamic>>.from(ordersRaw);
+      if (orders.isEmpty) return 0;
+
+      final stayIds = orders
+          .map((o) => o['stay_id'] as String?)
+          .where((id) => id != null)
+          .toSet()
+          .cast<String>()
+          .toList();
+
+      final activeStayIds = <String>{};
+      if (stayIds.isNotEmpty) {
+        try {
+          final staysRaw = await client
+              .from('stay')
+              .select('stay_id, status')
+              .inFilter('stay_id', stayIds);
+          for (final s in (staysRaw as List)) {
+            if ((s['status'] as String? ?? '').toLowerCase() == 'active') {
+              activeStayIds.add(s['stay_id'] as String);
+            }
+          }
+        } catch (_) {}
+      }
+
+      final staleOrderIds = <String>[];
+      for (final o in orders) {
+        final sid = o['stay_id'] as String?;
+        final rid = o['room_id'] as String?;
+        final soId = o['so_id'] as String?;
+        final isPoolSide = o['order_type'] == 'pool_side';
+
+        bool isStale = false;
+        if (sid != null) {
+          if (!activeStayIds.contains(sid)) {
+            isStale = true;
+          }
+        } else if (!isPoolSide && rid != null && !bookedRoomIds.contains(rid)) {
+          isStale = true;
+        }
+
+        if (isStale && soId != null) {
+          staleOrderIds.add(soId);
+        }
+      }
+
+      if (staleOrderIds.isNotEmpty) {
+        await client
+            .from('service_orders')
+            .update({
+              'status': 'cancelled',
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .inFilter('so_id', staleOrderIds);
+      }
+
+      return staleOrderIds.length;
+    } catch (e) {
+      debugPrint('[SupabaseService] sweepDepartedOrders error: $e');
+      return 0;
     }
   }
 
@@ -1552,40 +1904,65 @@ class SupabaseService {
   // ORDER ALLOTMENTS
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Fetch allotments for an employee — returns normalized maps
+  /// Fetch allotments for an employee — returns normalized maps.
+  /// Results are sorted: in_progress orders first, then by newest created_at,
+  /// so the employee always sees their active work at the top.
   Future<List<Map<String, dynamic>>> fetchEmployeeAllotments(
     String empId,
   ) async {
     try {
+      // Limit to 100 most recent allotments to prevent unbounded payload growth
+      // for employees with long order history.
       final response = await client
           .from('order_allotments')
           .select(
             'id, orderid, room_number, order_price, created_at, service_orders(so_id, status, order_type, created_at, so_total, user_phone_no, rooms(room_number, floor), services(name), service_order_items(soi_id, item_name, qty, item_sp, cost))',
           )
           .eq('employee_id', empId)
-          .order('created_at', ascending: false);
+          .order('created_at', ascending: false)
+          .limit(100);
 
-      return (response as List).map((e) {
-        final map = e as Map<String, dynamic>;
-        final so = map['service_orders'] as Map<String, dynamic>?;
-        final room = so?['rooms'] as Map<String, dynamic>?;
-        final service = so?['services'] as Map<String, dynamic>?;
-        return {
-          'allotment_id': map['id'],
-          'so_id': so?['so_id'] ?? map['orderid'],
-          'status': so?['status'] ?? 'ordered',
-          'room_number': room?['room_number'] ?? '',
-          'floor': room?['floor'] ?? '',
-          'service_name': service?['name'] ?? 'Service',
-          'order_type': so?['order_type'] ?? '',
-          'so_total': (so?['so_total'] ?? 0.0).toDouble(),
-          'user_phone_no': so?['user_phone_no'] ?? '',
-          'created_at': so?['created_at'] ?? map['created_at'],
-          'order_price': (map['order_price'] ?? so?['so_total'] ?? 0.0)
-              .toDouble(),
-          'service_order_items': so?['service_order_items'] ?? [],
-        };
-      }).toList();
+      final mapped = (response as List)
+          .where((e) {
+            final map = e as Map<String, dynamic>;
+            final so = map['service_orders'] as Map<String, dynamic>?;
+            final status = (so?['status'] as String? ?? '').toLowerCase();
+            // Hide orders that were auto-cancelled during checkout
+            return status != 'checkout_cancelled';
+          })
+          .map((e) {
+            final map = e as Map<String, dynamic>;
+            final so = map['service_orders'] as Map<String, dynamic>?;
+            final room = so?['rooms'] as Map<String, dynamic>?;
+            final service = so?['services'] as Map<String, dynamic>?;
+            return {
+              'allotment_id': map['id'],
+              'so_id': so?['so_id'] ?? map['orderid'],
+              'status': so?['status'] ?? 'ordered',
+              'room_number': room?['room_number'] ?? '',
+              'floor': room?['floor'] ?? '',
+              'service_name': service?['name'] ?? 'Service',
+              'order_type': so?['order_type'] ?? '',
+              'so_total': (so?['so_total'] ?? 0.0).toDouble(),
+              'user_phone_no': so?['user_phone_no'] ?? '',
+              'created_at': so?['created_at'] ?? map['created_at'],
+              'order_price': (map['order_price'] ?? so?['so_total'] ?? 0.0)
+                  .toDouble(),
+              'service_order_items': so?['service_order_items'] ?? [],
+            };
+          })
+          .toList();
+
+      // P7 FIX: Sort in_progress first so active work is always at the top.
+      // Secondary sort: newest created_at (already fetched in DESC order).
+      mapped.sort((a, b) {
+        const activeStatus = 'in_progress';
+        final aActive = (a['status'] as String? ?? '') == activeStatus ? 0 : 1;
+        final bActive = (b['status'] as String? ?? '') == activeStatus ? 0 : 1;
+        return aActive.compareTo(bActive);
+      });
+
+      return mapped;
     } on PostgrestException catch (e) {
       throw Exception('Failed to fetch allotments: ${e.message}');
     }

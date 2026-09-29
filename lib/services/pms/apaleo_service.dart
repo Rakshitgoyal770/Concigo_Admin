@@ -36,6 +36,8 @@ class ApaleoService {
   /// Fires true when token refresh fails so the UI can show a reconnect banner.
   static final ValueNotifier<bool> tokenExpiredNotifier = ValueNotifier(false);
   static final ValueNotifier<String?> tokenErrorMessage = ValueNotifier(null);
+  /// Reactive notifier for overall PMS connection state
+  static final ValueNotifier<bool> connectionNotifier = ValueNotifier(false);
 
   String? _accessToken;
   String? _refreshToken;
@@ -79,6 +81,8 @@ class ApaleoService {
     if (_accessToken != null && _accessToken!.isNotEmpty) {
       _expiresAt ??= _extractJwtExpiry(_accessToken!);
     }
+
+    connectionNotifier.value = isConnected;
 
     debugPrint(
       '[ApaleoService] init complete. Token present: ${_accessToken != null && _accessToken!.isNotEmpty}. '
@@ -229,6 +233,7 @@ class ApaleoService {
         // ✅ Clear any previous auth error
         tokenExpiredNotifier.value = false;
         tokenErrorMessage.value = null;
+        connectionNotifier.value = isConnected;
         await _saveConfig();
         await _persistTokensToSupabase();
         debugPrint('[ApaleoService] ✅ Token refreshed successfully. Valid for ${expiresIn}s.');
@@ -251,6 +256,7 @@ class ApaleoService {
   void _setTokenError(String message) {
     tokenExpiredNotifier.value = true;
     tokenErrorMessage.value = message;
+    connectionNotifier.value = false;
   }
 
   /// Persist current tokens to Supabase `pms_tokens` table so server-side
@@ -353,7 +359,11 @@ class ApaleoService {
         _refreshToken = data['refresh_token'];
         final expiresIn = (data['expires_in'] as num?)?.toInt() ?? 3600;
         _expiresAt = DateTime.now().add(Duration(seconds: expiresIn));
+        tokenExpiredNotifier.value = false;
+        tokenErrorMessage.value = null;
+        connectionNotifier.value = true;
         await _saveConfig();
+        await _persistTokensToSupabase();
         debugPrint('[ApaleoService] ✅ Auth code exchange successful! Token valid for ${expiresIn}s');
         return true;
       } else {
@@ -371,6 +381,7 @@ class ApaleoService {
     _accessToken = null;
     _refreshToken = null;
     _expiresAt = null;
+    connectionNotifier.value = false;
     try {
       if (kIsWeb) {
         final prefs = await SharedPreferences.getInstance();
@@ -458,6 +469,7 @@ class ApaleoService {
     DateTime? from,
     DateTime? to,
     List<String>? statuses,
+    String? dateFilter,
   }) async {
     var token = await getValidAccessToken();
     if (token == null || token.isEmpty) {
@@ -469,12 +481,32 @@ class ApaleoService {
     if (propertyId != null && propertyId.isNotEmpty) {
       baseQueryParts.add('propertyIds=$propertyId');
     }
-    if (from != null) baseQueryParts.add('from=${from.toUtc().toIso8601String()}');
-    if (to != null) baseQueryParts.add('to=${to.toUtc().toIso8601String()}');
-    if (statuses != null && statuses.isNotEmpty) {
-      for (final s in statuses) {
-        baseQueryParts.add('status=$s');
+
+    // Format DateTime to Apaleo's strict ISO 8601 without fractional seconds:
+    // YYYY-MM-DDTHH:mm:ssZ (Apaleo rejects fractional seconds .123Z with HTTP 422)
+    String formatApaleoDate(DateTime dt) {
+      final u = dt.toUtc();
+      return '${u.year.toString().padLeft(4, '0')}-'
+          '${u.month.toString().padLeft(2, '0')}-'
+          '${u.day.toString().padLeft(2, '0')}T'
+          '${u.hour.toString().padLeft(2, '0')}:'
+          '${u.minute.toString().padLeft(2, '0')}:'
+          '${u.second.toString().padLeft(2, '0')}Z';
+    }
+
+    // Apaleo REQUIRES dateFilter when from/to are provided (e.g. Stay, Modification, Arrival, Departure).
+    if (from != null || to != null) {
+      baseQueryParts.add('dateFilter=${dateFilter ?? 'Stay'}');
+      if (from != null) {
+        baseQueryParts.add('from=${formatApaleoDate(from)}');
       }
+      if (to != null) {
+        baseQueryParts.add('to=${formatApaleoDate(to)}');
+      }
+    }
+
+    if (statuses != null && statuses.length == 1) {
+      baseQueryParts.add('status=${statuses.first}');
     }
 
     const int pageSize = 100;
@@ -515,6 +547,16 @@ class ApaleoService {
         throw Exception('Failed to fetch reservations (page $pageNumber): ${resp.statusCode} ${resp.body}');
       }
     } while (allReservations.length < totalCount);
+
+    // If multiple statuses were specified, filter in memory since Apaleo's REST API
+    // only accepts a single `status` parameter (or none to return all statuses).
+    if (statuses != null && statuses.length > 1) {
+      final statusSet = statuses.map((s) => s.toLowerCase()).toSet();
+      allReservations.retainWhere((r) {
+        final st = r['status']?.toString().toLowerCase() ?? '';
+        return statusSet.contains(st);
+      });
+    }
 
     // Clear any stale auth error if we succeeded
     if (tokenExpiredNotifier.value) {

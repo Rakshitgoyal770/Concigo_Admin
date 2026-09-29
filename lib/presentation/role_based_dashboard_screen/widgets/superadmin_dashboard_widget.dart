@@ -3488,13 +3488,24 @@ class _SuperAdminDashboardWidgetState extends State<SuperAdminDashboardWidget>
                 // is triggered. Bypassing this caused guests to resurrect on next sync.
                 final roomId = roomIds.isNotEmpty ? roomIds.first : null;
                 final result = await StayService().checkoutStay(stayId: stayId, roomId: roomId);
+                String successMsg = 'Guest checked out successfully';
+                if (result.cancelledOrderCount > 0 || result.closedOrderCount > 0) {
+                  final details = <String>[];
+                  if (result.cancelledOrderCount > 0) {
+                    details.add('${result.cancelledOrderCount} orders cancelled');
+                  }
+                  if (result.closedOrderCount > 0) {
+                    details.add('${result.closedOrderCount} flagged for review');
+                  }
+                  successMsg += ' (${details.join(", ")})';
+                }
                 if (!result.pmsSynced && result.pmsWarning != null) {
                   Fluttertoast.showToast(
                     msg: '⚠️ Checked out locally. ${result.pmsWarning}',
                     toastLength: Toast.LENGTH_LONG,
                   );
                 } else {
-                  Fluttertoast.showToast(msg: 'Guest checked out successfully');
+                  Fluttertoast.showToast(msg: successMsg);
                 }
                 await _reloadStays();
               } catch (e) {

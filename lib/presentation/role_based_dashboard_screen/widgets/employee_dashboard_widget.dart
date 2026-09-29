@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:realtime_client/realtime_client.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../theme/app_theme.dart';
 import '../../../widgets/empty_state_widget.dart';
@@ -42,6 +45,9 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
   bool _isLoading = true;
   late AnimationController _entranceController;
   late List<Animation<double>> _cardAnimations;
+  Timer? _refreshTimer;
+  Timer? _realtimeDebounce;
+  RealtimeChannel? _allotmentsChannel;
 
   // Normalized allotment maps from supabase_service
   List<Map<String, dynamic>> _assignedOrderMaps = [];
@@ -67,9 +73,71 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
       ),
     );
     _loadData();
+    // Realtime: new assignment appears instantly
+    _subscribeToAllotments();
+    // Fallback timer every 2 min — realtime handles near-instant delivery.
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 120),
+      (_) { if (mounted) _loadData(silent: true); },
+    );
   }
 
-  Future<void> _loadData() async {
+  /// Debounced reload — collapses rapid bursts (e.g. PMS sync updating
+  /// many service_orders rows) into a single fetchEmployeeAllotments() call.
+  void _scheduleDebouncedReload() {
+    _realtimeDebounce?.cancel();
+    _realtimeDebounce = Timer(
+      const Duration(seconds: 3),
+      () { if (mounted) _loadData(silent: true); },
+    );
+  }
+
+  /// Subscribes to order_allotments for this employee.
+  /// INSERT on order_allotments triggers an immediate reload (new assignment).
+  /// UPDATE on service_orders goes through a 3-second debounce so bulk PMS
+  /// sync events don't chain multiple DB fetches.
+  void _subscribeToAllotments() {
+    final client = SupabaseService.instance.client;
+    _allotmentsChannel = client
+        .channel('emp_allotments_${widget.empId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'order_allotments',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'employee_id',
+            value: widget.empId,
+          ),
+          callback: (_) {
+            // New assignment: reload immediately so employee sees it right away
+            if (mounted) _loadData(silent: true);
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'service_orders',
+          callback: (_) {
+            // Status update: debounce to avoid cascading reloads
+            if (mounted) _scheduleDebouncedReload();
+          },
+        )
+        .subscribe((status, [error]) {
+          if (status == RealtimeSubscribeStatus.channelError ||
+              status == RealtimeSubscribeStatus.timedOut) {
+            Future.delayed(const Duration(seconds: 5), () {
+              if (mounted) {
+                _allotmentsChannel?.unsubscribe();
+                _allotmentsChannel = null;
+                _subscribeToAllotments();
+              }
+            });
+          }
+        });
+  }
+
+  Future<void> _loadData({bool silent = false}) async {
     try {
       final allotments = await SupabaseService.instance.fetchEmployeeAllotments(
         widget.empId,
@@ -77,27 +145,41 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
       if (mounted) {
         setState(() {
           _assignedOrderMaps = allotments;
+          if (!silent) _isLoading = false;
           _isLoading = false;
         });
-        _entranceController.forward();
+        if (!silent) _entranceController.forward();
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        _entranceController.forward();
+        if (!silent) _entranceController.forward();
+        if (!silent) {
+          Fluttertoast.showToast(
+            msg: 'Failed to load orders',
+            backgroundColor: AppTheme.error,
+            textColor: Colors.white,
+          );
+        }
       }
     }
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
+    _realtimeDebounce?.cancel();
+    _allotmentsChannel?.unsubscribe();
+    _allotmentsChannel = null;
     _entranceController.dispose();
     super.dispose();
   }
 
+  // B4 FIX: Removed 'status == ordered' — employee-assigned orders are always
+  // set to 'in_progress' by createOrderAllotment before appearing here.
+  // 'ordered' check was dead code and could produce an inflated pending count.
   int get _pendingCount => _assignedOrderMaps.where((o) {
-    final status = o['status'] as String? ?? '';
-    return status == 'in_progress' || status == 'ordered';
+    return (o['status'] as String? ?? '') == 'in_progress';
   }).length;
 
   int get _deliveredCount => _assignedOrderMaps.where((o) {
@@ -106,16 +188,21 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
 
   @override
   Widget build(BuildContext context) {
-    return CustomScrollView(
-      slivers: [
-        DashboardAppBarWidget(
-          scaffoldKey: widget.scaffoldKey,
-          title: widget.selectedSection == 0 ? 'My Dashboard' : 'My Orders',
-          subtitle: widget.propertyName,
-          roleColor: AppTheme.employeeColor,
-          roleLabel: 'Service Employee',
-          employeeName: widget.employeeName,
-        ),
+    return RefreshIndicator(
+      onRefresh: () => _loadData(),
+      color: AppTheme.employeeColor,
+      backgroundColor: AppTheme.surface,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          DashboardAppBarWidget(
+            scaffoldKey: widget.scaffoldKey,
+            title: widget.selectedSection == 0 ? 'My Dashboard' : 'My Orders',
+            subtitle: widget.propertyName,
+            roleColor: AppTheme.employeeColor,
+            roleLabel: 'Service Employee',
+            employeeName: widget.employeeName,
+          ),
         SliverToBoxAdapter(
           child: Padding(
             padding: EdgeInsets.symmetric(
@@ -127,7 +214,8 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
                 : _buildContent(),
           ),
         ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -313,8 +401,9 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
   }
 
   Widget _buildAssignedOrderCard(Map<String, dynamic> order) {
-    final status = order['status'] as String? ?? 'ordered';
+    final status = (order['status'] as String? ?? 'ordered').toLowerCase();
     final isDelivered = status == 'delivered';
+    final isCheckoutClosed = status == 'checkout_closed';
     final roomNumber = order['room_number'] as String? ?? '-';
     final floor = order['floor'] as String? ?? '-';
     final serviceName = order['service_name'] as String? ?? 'Service';
@@ -339,6 +428,8 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
         border: Border.all(
           color: isDelivered
               ? AppTheme.successContainer
+              : isCheckoutClosed
+              ? const Color(0xFFFDE68A)
               : AppTheme.employeeColor.withAlpha(60),
           width: isDelivered ? 1 : 1.5,
         ),
@@ -346,6 +437,8 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
           BoxShadow(
             color: isDelivered
                 ? Colors.black.withAlpha(6)
+                : isCheckoutClosed
+                ? Colors.orange.withAlpha(15)
                 : AppTheme.employeeColor.withAlpha(20),
             blurRadius: 12,
             offset: const Offset(0, 4),
@@ -360,6 +453,8 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
             decoration: BoxDecoration(
               color: isDelivered
                   ? AppTheme.successContainer
+                  : isCheckoutClosed
+                  ? const Color(0xFFFEF3C7)
                   : AppTheme.employeeContainer,
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(16),
@@ -371,10 +466,14 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
                 Icon(
                   isDelivered
                       ? Icons.check_circle_rounded
+                      : isCheckoutClosed
+                      ? Icons.logout_rounded
                       : Icons.pending_actions_rounded,
                   size: 16,
                   color: isDelivered
                       ? AppTheme.success
+                      : isCheckoutClosed
+                      ? const Color(0xFFD97706)
                       : AppTheme.employeeColor,
                 ),
                 const SizedBox(width: 8),
@@ -385,9 +484,29 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
                     fontWeight: FontWeight.w700,
                     color: isDelivered
                         ? AppTheme.success
+                        : isCheckoutClosed
+                        ? const Color(0xFF92400E)
                         : AppTheme.employeeColor,
                   ),
                 ),
+                if (isCheckoutClosed) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFDE68A),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      'Guest Checked Out',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF92400E),
+                      ),
+                    ),
+                  ),
+                ],
                 const Spacer(),
                 Text(
                   timeStr,
@@ -396,6 +515,8 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
                     fontWeight: FontWeight.w400,
                     color: isDelivered
                         ? AppTheme.success.withAlpha(180)
+                        : isCheckoutClosed
+                        ? const Color(0xFF92400E).withAlpha(180)
                         : AppTheme.employeeColor.withAlpha(180),
                   ),
                 ),
@@ -548,7 +669,38 @@ class _EmployeeDashboardWidgetState extends State<EmployeeDashboardWidget>
                         ),
                       ],
                     ),
-                    if (!isDelivered)
+                    if (isCheckoutClosed)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF3C7),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFFDE68A)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.info_outline_rounded,
+                              size: 15,
+                              color: Color(0xFFD97706),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Guest Departed • Closed',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xFF92400E),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (!isDelivered)
                       ElevatedButton.icon(
                         onPressed: () => _confirmDelivery(order),
                         icon: const Icon(Icons.check_rounded, size: 16),

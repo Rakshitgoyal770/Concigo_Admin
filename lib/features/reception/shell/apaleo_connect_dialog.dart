@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import '../../../core/constants/app_typography.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/widgets/luxury_button.dart';
 import '../../../services/pms/apaleo_service.dart';
+import '../../../services/pms/pms_sync_service.dart';
 
 String _generateState() {
   final rand = Random.secure();
@@ -200,7 +202,7 @@ class _ApaleoConnectDialogState extends State<ApaleoConnectDialog>
             children: [
               Text('Apaleo PMS Integration', style: AppTypography.titleSmall),
               Text(
-                widget.isCurrentlyConnected && _step == _ConnectStep.idle
+                (widget.isCurrentlyConnected || ApaleoService.instance.isConnected) && _step == _ConnectStep.idle
                     ? 'Connected — tokens auto-refresh every hour'
                     : 'Connect once, auto-refreshes forever',
                 style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
@@ -218,7 +220,8 @@ class _ApaleoConnectDialogState extends State<ApaleoConnectDialog>
   }
 
   Widget _buildBody() {
-    if (widget.isCurrentlyConnected && _step == _ConnectStep.idle) {
+    final connected = widget.isCurrentlyConnected || ApaleoService.instance.isConnected;
+    if (connected && _step == _ConnectStep.idle) {
       return _buildConnectedState();
     }
     switch (_step) {
@@ -610,8 +613,10 @@ class _ApaleoConnectDialogState extends State<ApaleoConnectDialog>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ApaleoStatusChip — compact header chip showing PMS connection status.
-// Green = connected, Red = disconnected. Tap to open the connect dialog.
+// ApaleoStatusChip — compact header chip showing PMS connection health.
+// 🟢 Connected  = token valid + synced < 4 min ago
+// 🟡 Delay      = synced 4–12 min ago (cron may be slow)
+// 🔴 Offline    = token expired OR no sync in > 12 min
 // ─────────────────────────────────────────────────────────────────────────────
 class ApaleoStatusChip extends StatefulWidget {
   const ApaleoStatusChip({super.key});
@@ -621,12 +626,100 @@ class ApaleoStatusChip extends StatefulWidget {
 }
 
 class _ApaleoStatusChipState extends State<ApaleoStatusChip> {
-  bool _connected = false;
+  late final Timer _ticker;
 
   @override
   void initState() {
     super.initState();
-    _connected = ApaleoService.instance.isConnected;
+    ApaleoService.connectionNotifier.addListener(_onChanged);
+    ApaleoService.tokenExpiredNotifier.addListener(_onChanged);
+    PmsSyncService.lastSyncNotifier.addListener(_onChanged);
+    // Refresh displayed time every 30 seconds
+    _ticker = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    ApaleoService.connectionNotifier.removeListener(_onChanged);
+    ApaleoService.tokenExpiredNotifier.removeListener(_onChanged);
+    PmsSyncService.lastSyncNotifier.removeListener(_onChanged);
+    _ticker.cancel();
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool get _tokenOk =>
+      (ApaleoService.instance.isConnected || ApaleoService.connectionNotifier.value) &&
+      !ApaleoService.tokenExpiredNotifier.value;
+
+  /// 0 = green (good), 1 = yellow (delayed), 2 = red (offline)
+  int get _healthLevel {
+    if (!_tokenOk) return 2;
+    final last = PmsSyncService.lastSyncNotifier.value;
+    if (last == null) return 1; // connected but never synced yet this session
+    final age = DateTime.now().difference(last).inMinutes;
+    if (age < 4) return 0;
+    if (age < 12) return 1;
+    return 2;
+  }
+
+  String get _label {
+    switch (_healthLevel) {
+      case 0:
+        return 'PMS Live';
+      case 1:
+        return 'PMS Delay';
+      case 2:
+        return !_tokenOk ? 'Connect PMS' : 'PMS Offline';
+      default:
+        return 'PMS';
+    }
+  }
+
+  String get _syncAgoText {
+    final last = PmsSyncService.lastSyncNotifier.value;
+    if (last == null) return '';
+    final mins = DateTime.now().difference(last).inMinutes;
+    if (mins < 1) return ' · just now';
+    if (mins == 1) return ' · 1 min ago';
+    return ' · ${mins}m ago';
+  }
+
+  Color get _dotColor {
+    switch (_healthLevel) {
+      case 0: return const Color(0xFF22C55E); // green-500
+      case 1: return const Color(0xFFF59E0B); // amber-500
+      default: return const Color(0xFFEF4444); // red-500
+    }
+  }
+
+  Color get _bgColor {
+    switch (_healthLevel) {
+      case 0: return const Color(0xFFF0FDF4); // green-50
+      case 1: return const Color(0xFFFFFBEB); // amber-50
+      default: return const Color(0xFFFEF2F2); // red-50
+    }
+  }
+
+  Color get _borderColor {
+    switch (_healthLevel) {
+      case 0: return const Color(0xFFBBF7D0); // green-200
+      case 1: return const Color(0xFFFDE68A); // amber-200
+      default: return const Color(0xFFFECACA); // red-200
+    }
+  }
+
+  Color get _textColor {
+    switch (_healthLevel) {
+      case 0: return const Color(0xFF16A34A); // green-600
+      case 1: return const Color(0xFFD97706); // amber-600
+      default: return const Color(0xFFDC2626); // red-600
+    }
   }
 
   void _openDialog() {
@@ -634,12 +727,12 @@ class _ApaleoStatusChipState extends State<ApaleoStatusChip> {
       context: context,
       barrierDismissible: true,
       builder: (_) => ApaleoConnectDialog(
-        isCurrentlyConnected: _connected,
+        isCurrentlyConnected: _tokenOk,
         onConnected: () {
-          if (mounted) setState(() => _connected = true);
+          if (mounted) setState(() {});
         },
         onDisconnected: () {
-          if (mounted) setState(() => _connected = false);
+          if (mounted) setState(() {});
         },
       ),
     );
@@ -647,51 +740,55 @@ class _ApaleoStatusChipState extends State<ApaleoStatusChip> {
 
   @override
   Widget build(BuildContext context) {
+    final tooltip = switch (_healthLevel) {
+      0 => 'PMS synced${_syncAgoText}. Tap to manage connection.',
+      1 => 'PMS sync is delayed${_syncAgoText}. Tap to check.',
+      _ => !_tokenOk
+          ? 'Apaleo token expired — tap to reconnect.'
+          : 'PMS has not synced recently${_syncAgoText}. Tap to check.',
+    };
+
     return Tooltip(
-      message: _connected
-          ? 'Apaleo connected — tokens auto-refresh hourly. Tap to manage.'
-          : 'Apaleo not connected — tap to connect',
+      message: tooltip,
       child: InkWell(
         onTap: _openDialog,
         borderRadius: AppSpacing.roundedFull,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
+          duration: const Duration(milliseconds: 400),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: _connected ? AppColors.successLight : AppColors.departureLight,
+            color: _bgColor,
             borderRadius: AppSpacing.roundedFull,
-            border: Border.all(
-              color: _connected ? AppColors.successBorder : AppColors.departureBorder,
-              width: 0.8,
-            ),
+            border: Border.all(color: _borderColor, width: 0.8),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Pulsing dot for live/delay states
               AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
+                duration: const Duration(milliseconds: 400),
                 width: 7,
                 height: 7,
                 decoration: BoxDecoration(
-                  color: _connected ? AppColors.success : AppColors.departure,
+                  color: _dotColor,
                   shape: BoxShape.circle,
                 ),
               ),
               const SizedBox(width: 5),
               AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 250),
+                duration: const Duration(milliseconds: 400),
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: _connected ? AppColors.success : AppColors.departure,
+                  color: _textColor,
                 ),
-                child: Text(_connected ? 'Apaleo' : 'Connect PMS'),
+                child: Text(_label + (_healthLevel == 0 ? _syncAgoText : '')),
               ),
               const SizedBox(width: 3),
               Icon(
-                _connected ? Icons.expand_more_rounded : Icons.add_link_rounded,
+                _healthLevel < 2 ? Icons.expand_more_rounded : Icons.add_link_rounded,
                 size: 13,
-                color: _connected ? AppColors.success : AppColors.departure,
+                color: _textColor,
               ),
             ],
           ),

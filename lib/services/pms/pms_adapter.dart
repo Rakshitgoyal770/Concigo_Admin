@@ -3,6 +3,7 @@
 /// This contract decouples Concigo from any specific PMS vendor (Apaleo, Cloudbeds, Mews, Opera).
 /// Any new PMS integration only needs to implement [PmsAdapter] without modifying
 /// Concigo UI, check-in flows, or database structures.
+library;
 
 abstract class PmsAdapter {
   /// Unique identifier of the PMS provider (e.g. 'apaleo', 'cloudbeds', 'opera').
@@ -14,6 +15,7 @@ abstract class PmsAdapter {
     DateTime? from,
     DateTime? to,
     List<String>? statuses,
+    String? dateFilter,
   });
 
   /// 2. Fetch room categories (unit-groups in Apaleo, room_types in Cloudbeds).
@@ -78,6 +80,10 @@ class CanonicalReservation {
   final double totalAmount;
   final String currency;
   final Map<String, dynamic> rawMetadata;
+  /// The `modified` timestamp from the PMS (e.g. Apaleo's `modified` field).
+  /// Used by [PmsSyncService] to skip reservations that haven't changed since
+  /// the last sync cycle, dramatically reducing DB load.
+  final DateTime? pmsModifiedAt;
 
   const CanonicalReservation({
     required this.pmsReservationId,
@@ -92,6 +98,7 @@ class CanonicalReservation {
     required this.totalAmount,
     required this.currency,
     this.rawMetadata = const {},
+    this.pmsModifiedAt,
   });
 }
 
