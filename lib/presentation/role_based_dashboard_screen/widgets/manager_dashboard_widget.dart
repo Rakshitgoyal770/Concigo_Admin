@@ -357,18 +357,18 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
       children: [
         const SizedBox(height: 8),
         Container(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.fromLTRB(20, 18, 16, 18),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              colors: [Color(0xFF059669), Color(0xFF10B981)],
+              colors: [Color(0xFF0A1628), Color(0xFF1E3A5F)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: AppTheme.managerColor.withAlpha(60),
-                blurRadius: 20,
+                color: const Color(0xFF0A1628).withAlpha(80),
+                blurRadius: 24,
                 offset: const Offset(0, 8),
               ),
             ],
@@ -379,62 +379,91 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Service Manager',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w400,
-                        color: Colors.white70,
-                      ),
+                    Row(
+                      children: [
+                        Image.asset(
+                          'assets/images/concigo_logo_transparent.png',
+                          height: 14,
+                          width: 14,
+                          color: AppTheme.brandGold,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          'Service Dashboard',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.brandGold,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 6),
                     Text(
                       widget.employeeName,
                       style: GoogleFonts.plusJakartaSans(
-                        fontSize: 20,
+                        fontSize: 19,
                         fontWeight: FontWeight.w700,
                         color: Colors.white,
                         letterSpacing: -0.3,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    if (totalAttention > 0)
+                    const SizedBox(height: 6),
+                    Text(
+                      widget.propertyName,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w400,
+                        color: Colors.white54,
+                      ),
+                    ),
+                    if (totalAttention > 0) ...[
+                      const SizedBox(height: 10),
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.white.withAlpha(30),
+                          color: AppTheme.brandGold.withAlpha(25),
                           borderRadius: BorderRadius.circular(100),
+                          border: Border.all(color: AppTheme.brandGold.withAlpha(70)),
                         ),
-                        child: Text(
-                          '$totalAttention orders need attention',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.notifications_active_rounded, size: 11, color: AppTheme.brandGold),
+                            const SizedBox(width: 4),
+                            Text(
+                              '$totalAttention orders need attention',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.brandGold,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
+                    ],
                   ],
                 ),
               ),
-              IconButton(
-                onPressed: _isSweeping ? null : _sweepDepartedOrders,
-                icon: _isSweeping
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.cleaning_services_rounded, color: Colors.white, size: 24),
-                tooltip: 'Clear Departed Orders',
-              ),
-              IconButton(
-                onPressed: () => _loadData(),
-                icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 28),
-                tooltip: 'Refresh Orders',
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _headerActionButton(
+                    icon: _isSweeping
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white60))
+                        : const Icon(Icons.auto_delete_rounded, color: Colors.white70, size: 18),
+                    onTap: _isSweeping ? null : _sweepDepartedOrders,
+                    tooltip: 'Clear Departed',
+                  ),
+                  const SizedBox(height: 8),
+                  _headerActionButton(
+                    icon: const Icon(Icons.refresh_rounded, color: Colors.white70, size: 18),
+                    onTap: () => _loadData(),
+                    tooltip: 'Refresh',
+                  ),
+                ],
               ),
             ],
           ),
@@ -449,6 +478,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 '$newCount',
                 AppTheme.warning,
                 AppTheme.warningContainer,
+                icon: Icons.inbox_rounded,
                 onTap: () => widget.onSectionChanged(1),
               ),
             ),
@@ -459,6 +489,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 '$unallottedCount',
                 AppTheme.primary,
                 AppTheme.primaryContainer,
+                icon: Icons.person_search_rounded,
                 onTap: () => widget.onSectionChanged(2),
               ),
             ),
@@ -469,6 +500,7 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
                 '$allottedCount',
                 AppTheme.success,
                 AppTheme.successContainer,
+                icon: Icons.engineering_rounded,
                 onTap: () => widget.onSectionChanged(3),
               ),
             ),
@@ -2052,19 +2084,20 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
     Color color,
     Color bgColor, {
     VoidCallback? onTap,
+    IconData icon = Icons.bar_chart_rounded,
   }) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
         decoration: BoxDecoration(
           color: AppTheme.surface,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withAlpha(40)),
+          border: Border.all(color: AppTheme.outline),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withAlpha(8),
+              color: Colors.black.withAlpha(6),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),
@@ -2073,29 +2106,73 @@ class _ManagerDashboardWidgetState extends State<ManagerDashboardWidget>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Icon badge
             Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: color.withAlpha(18),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, size: 16, color: color),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Text(
               value,
               style: GoogleFonts.plusJakartaSans(
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
                 color: AppTheme.onSurface,
+                letterSpacing: -0.5,
               ),
             ),
+            const SizedBox(height: 1),
             Text(
               label,
               style: GoogleFonts.plusJakartaSans(
-                fontSize: 11,
+                fontSize: 10.5,
                 fontWeight: FontWeight.w500,
                 color: AppTheme.onSurfaceMuted,
               ),
             ),
+            if (onTap != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Text(
+                    'View',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: color,
+                    ),
+                  ),
+                  Icon(Icons.arrow_forward_rounded, size: 10, color: color),
+                ],
+              ),
+            ],
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Small circular action button used in the header card
+  Widget _headerActionButton({required Widget icon, VoidCallback? onTap, String? tooltip}) {
+    return Tooltip(
+      message: tooltip ?? '',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: Colors.white.withAlpha(12),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white.withAlpha(20)),
+          ),
+          child: Center(child: icon),
         ),
       ),
     );

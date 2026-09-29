@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../theme/app_theme.dart';
@@ -33,7 +33,8 @@ class _DashboardAppBarWidgetState extends State<DashboardAppBarWidget> {
   void initState() {
     super.initState();
     _now = DateTime.now();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+    // Tick every minute — no need for per-second rebuild, reduces setState calls
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
   }
@@ -51,51 +52,22 @@ class _DashboardAppBarWidgetState extends State<DashboardAppBarWidget> {
     return 'Good evening';
   }
 
-  String _getGreetingEmoji() {
-    final hour = _now.hour;
-    if (hour < 12) return '☀️';
-    if (hour < 17) return '🌤️';
-    return '🌙';
-  }
-
   String _getInitials() {
     final parts = widget.employeeName.trim().split(' ');
     if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    if (parts.isNotEmpty && parts[0].isNotEmpty) {
-      return parts[0][0].toUpperCase();
-    }
-    return 'Z';
+    if (parts.isNotEmpty && parts[0].isNotEmpty) return parts[0][0].toUpperCase();
+    return 'C';
   }
 
-  String _formatTime() {
-    final h = _now.hour > 12
-        ? _now.hour - 12
-        : (_now.hour == 0 ? 12 : _now.hour);
-    final m = _now.minute.toString().padLeft(2, '0');
-    final s = _now.second.toString().padLeft(2, '0');
-    final period = _now.hour >= 12 ? 'PM' : 'AM';
-    return '$h:$m:$s $period';
-  }
-
-  String _formatDate() {
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  String _formatDateTime() {
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
     final dayName = days[_now.weekday - 1];
     final month = months[_now.month - 1];
-    return '$dayName, ${_now.day} $month ${_now.year}';
+    final h = _now.hour > 12 ? _now.hour - 12 : (_now.hour == 0 ? 12 : _now.hour);
+    final m = _now.minute.toString().padLeft(2, '0');
+    final period = _now.hour >= 12 ? 'PM' : 'AM';
+    return '$dayName, ${_now.day} $month  ·  $h:$m $period';
   }
 
   String _getFirstName() {
@@ -106,19 +78,19 @@ class _DashboardAppBarWidgetState extends State<DashboardAppBarWidget> {
   @override
   Widget build(BuildContext context) {
     final roleColor = widget.roleColor;
-    final roleBg = roleColor.withAlpha(18);
-    final roleBorder = roleColor.withAlpha(50);
+    final roleBg = roleColor.withAlpha(20);
+    final roleBorder = roleColor.withAlpha(45);
 
     return SliverAppBar(
       pinned: true,
       floating: false,
-      expandedHeight: 148,
-      backgroundColor: AppTheme.background,
+      expandedHeight: 136,
+      backgroundColor: AppTheme.primary,
       elevation: 0,
-      scrolledUnderElevation: 1,
-      shadowColor: Colors.black.withAlpha(15),
+      scrolledUnderElevation: 0,
+      // Menu button — opens drawer
       leading: Padding(
-        padding: const EdgeInsets.only(left: 12),
+        padding: const EdgeInsets.only(left: 14),
         child: Center(
           child: GestureDetector(
             onTap: () => widget.scaffoldKey.currentState?.openDrawer(),
@@ -126,45 +98,39 @@ class _DashboardAppBarWidgetState extends State<DashboardAppBarWidget> {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: AppTheme.surface,
+                color: Colors.white.withAlpha(18),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppTheme.outline),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withAlpha(8),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+                border: Border.all(color: Colors.white.withAlpha(30)),
               ),
               child: const Icon(
                 Icons.menu_rounded,
                 size: 18,
-                color: AppTheme.onSurface,
+                color: Colors.white,
               ),
             ),
           ),
         ),
       ),
+      // Avatar + notification
       actions: [
         Padding(
-          padding: const EdgeInsets.only(right: 14),
+          padding: const EdgeInsets.only(right: 16),
           child: Center(
             child: Container(
-              width: 38,
-              height: 38,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
-                color: roleBg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: roleBorder),
+                color: AppTheme.brandGold.withAlpha(25),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.brandGold.withAlpha(80)),
               ),
               child: Center(
                 child: Text(
                   _getInitials(),
-                  style: GoogleFonts.inter(
+                  style: GoogleFonts.plusJakartaSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: roleColor,
+                    color: AppTheme.brandGold,
                   ),
                 ),
               ),
@@ -174,73 +140,89 @@ class _DashboardAppBarWidgetState extends State<DashboardAppBarWidget> {
       ],
       flexibleSpace: FlexibleSpaceBar(
         background: Container(
-          color: AppTheme.background,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF0A1628), Color(0xFF1E3A5F)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(60, 8, 60, 0),
+              padding: const EdgeInsets.fromLTRB(64, 8, 64, 12),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Greeting row
+                  // Concigo logo + brand name
                   Row(
                     children: [
+                      Image.asset(
+                        'assets/images/concigo_logo_transparent.png',
+                        height: 18,
+                        width: 18,
+                        color: AppTheme.brandGold,
+                      ),
+                      const SizedBox(width: 6),
                       Text(
-                        '${_getGreeting()}, ${_getFirstName()}! ${_getGreetingEmoji()}',
-                        style: GoogleFonts.inter(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: AppTheme.onSurface,
-                          letterSpacing: -0.1,
+                        'CONCIGO',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.brandGold,
+                          letterSpacing: 2.5,
                         ),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
                       ),
                     ],
                   ),
+                  const SizedBox(height: 8),
+                  // Greeting
+                  Text(
+                    '${_getGreeting()}, ${_getFirstName()}',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                      letterSpacing: -0.2,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   const SizedBox(height: 5),
-                  // Property + Role row
+                  // Property · Role · Date
                   Row(
                     children: [
                       Flexible(
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.business_rounded,
-                              size: 12,
-                              color: AppTheme.onSurfaceMuted,
-                            ),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                widget.subtitle,
-                                style: GoogleFonts.inter(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w400,
-                                  color: AppTheme.onSurfaceMuted,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                              ),
-                            ),
-                          ],
+                        child: Text(
+                          widget.subtitle,
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w400,
+                            color: Colors.white60,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
                         ),
                       ),
-                      const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
+                        margin: const EdgeInsets.symmetric(horizontal: 8),
+                        width: 3,
+                        height: 3,
+                        decoration: const BoxDecoration(
+                          color: Colors.white30,
+                          shape: BoxShape.circle,
                         ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                         decoration: BoxDecoration(
                           color: roleBg,
-                          borderRadius: BorderRadius.circular(20),
+                          borderRadius: BorderRadius.circular(100),
                           border: Border.all(color: roleBorder),
                         ),
                         child: Text(
                           widget.roleLabel,
-                          style: GoogleFonts.inter(
+                          style: GoogleFonts.plusJakartaSans(
                             fontSize: 10,
                             fontWeight: FontWeight.w600,
                             color: roleColor,
@@ -249,38 +231,23 @@ class _DashboardAppBarWidgetState extends State<DashboardAppBarWidget> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  // Date + Time row
+                  const SizedBox(height: 5),
+                  // Date & time
                   Row(
                     children: [
                       Icon(
-                        Icons.calendar_today_rounded,
-                        size: 11,
-                        color: AppTheme.onSurfaceMuted.withAlpha(160),
+                        Icons.schedule_rounded,
+                        size: 10,
+                        color: Colors.white38,
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        _formatDate(),
-                        style: GoogleFonts.inter(
-                          fontSize: 11,
+                        _formatDateTime(),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10.5,
                           fontWeight: FontWeight.w400,
-                          color: AppTheme.onSurfaceMuted.withAlpha(180),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Icon(
-                        Icons.access_time_rounded,
-                        size: 11,
-                        color: roleColor.withAlpha(180),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _formatTime(),
-                        style: GoogleFonts.inter(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: roleColor.withAlpha(200),
-                          letterSpacing: 0.3,
+                          color: Colors.white38,
+                          letterSpacing: 0.2,
                         ),
                       ),
                     ],

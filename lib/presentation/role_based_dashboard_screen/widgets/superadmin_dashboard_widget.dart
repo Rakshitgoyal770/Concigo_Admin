@@ -85,8 +85,10 @@ class _SuperAdminDashboardWidgetState extends State<SuperAdminDashboardWidget>
       ),
     );
     _loadData();
-    // Auto-refresh SuperAdmin metrics & stays every 30 seconds
-    _periodicRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    // Auto-refresh SuperAdmin metrics & stays every 5 min.
+    // Supabase Realtime handles real-time order/stay changes instantly.
+    // This is only a reconciliation safety net — not the primary update path.
+    _periodicRefreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       if (mounted) {
         _loadData(silent: true);
       }

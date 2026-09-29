@@ -28,6 +28,10 @@ class PmsSyncService {
   VoidCallback? onSyncCompleted;
   int _syncCycleCounter = 0;
 
+  /// Tracks how many consecutive sync cycles have failed (ClientException / 503).
+  /// Used to trigger adaptive backoff: skip a cycle when DB is clearly unhealthy.
+  int _consecutiveFailures = 0;
+
   /// In-memory cache: pmsReservationId → last seen PMS `modified` timestamp.
   /// Used to skip DB work for reservations that haven't changed between sync cycles.
   /// Cache is cleared when the sync service is stopped or app restarts.
@@ -37,15 +41,32 @@ class PmsSyncService {
   /// Lets us fast-path skip Ended+Ended reservations without any DB lookup.
   final Map<String, String> _lastSeenStatus = {};
 
+  /// Delta sync watermark: the timestamp of the last successful sync cycle.
+  /// On cold-start (null), we do a full Stay-window fetch to build baseline.
+  /// On subsequent cycles, we fetch only reservations MODIFIED since this timestamp.
+  /// This reduces Apaleo API load from O(all reservations) to O(changed reservations).
+  DateTime? _deltaWatermark;
+
   /// Fires every time a sync cycle completes successfully.
   /// UI widgets can listen to this to show "last synced X ago" indicators.
   static final ValueNotifier<DateTime?> lastSyncNotifier = ValueNotifier(null);
 
+  // ── Retry constants ──────────────────────────────────────────────────────────
+  /// Max retry attempts per reservation on transient fetch errors.
+  static const int _kMaxRetries = 2;
+  /// Delay between retries (doubles each attempt: 1s → 2s).
+  static const _kRetryBaseDelay = Duration(seconds: 1);
 
-  /// Starts an automatic polling loop that queries the PMS periodically (default: every 30 seconds).
+
+  /// Starts a reconciliation polling loop against the PMS (default: every 5 minutes).
+  ///
+  /// Role: SAFETY NET only. Apaleo webhooks (apaleo-webhook Edge Function) handle
+  /// real-time reservation changes instantly. This loop uses a delta watermark so
+  /// it fetches ONLY modifications since the last cycle — costing 0 DB writes when
+  /// the hotel is idle. A full cold-start fetch runs once on session start.
   void startPeriodicSync({
     required String propertyId,
-    Duration interval = const Duration(seconds: 30),
+    Duration interval = const Duration(minutes: 5),
     VoidCallback? onComplete,
   }) {
     stopPeriodicSync();
@@ -67,24 +88,88 @@ class PmsSyncService {
         debugPrint('[PmsSyncService] ⏭ Skipping sync tick — sync already in progress.');
         return;
       }
+
+      // ── Adaptive backoff: if we have had ≥2 consecutive failures, skip this
+      // cycle and allow Supabase to recover before hammering it again.
+      if (_consecutiveFailures >= 2) {
+        // Allow recovery every 2nd skipped cycle
+        if (_syncCycleCounter % 2 != 0) {
+          debugPrint('[PmsSyncService] ⏸ Adaptive backoff — $_consecutiveFailures consecutive failures. Waiting for DB to recover...');
+          _syncCycleCounter++;
+          return;
+        }
+      }
+
+      // ── Pre-flight health check: abort the entire sync cycle if Supabase
+      // cannot even answer a simple ping query. This prevents the 34-reservation
+      // burst from making 170 failing requests against an unhealthy database.
+      if (!await _isSupabaseHealthy()) {
+        _consecutiveFailures++;
+        debugPrint('[PmsSyncService] ❌ Pre-flight health check failed (Supabase unreachable). Aborting sync cycle. Failures: $_consecutiveFailures');
+        _syncCycleCounter++;
+        return;
+      }
+
       try {
         _syncCycleCounter++;
-        // Re-sync physical rooms every 10 cycles (~5 minutes)
-        if (_syncCycleCounter % 10 == 0) {
+        // Re-sync physical rooms every 6 cycles (= every ~30 min at 5min interval)
+        if (_syncCycleCounter % 6 == 0) {
           await syncPhysicalRooms(propertyId: propertyId)
               .timeout(const Duration(seconds: 25));
         }
         final res = await syncReservations(propertyId: propertyId)
-            .timeout(const Duration(seconds: 25));
+            .timeout(const Duration(seconds: 60));
         if (res.isSuccess) {
+          _consecutiveFailures = 0; // Reset failure counter on success
           _lastSyncTime = DateTime.now();
           lastSyncNotifier.value = _lastSyncTime;
           onSyncCompleted?.call();
+        } else {
+          _consecutiveFailures++;
         }
       } catch (e) {
+        _consecutiveFailures++;
         debugPrint('[PmsSyncService] ⚠️ Sync cycle error/timeout: $e');
       }
     });
+  }
+
+  /// Lightweight Supabase health probe: queries 1 row from a small table.
+  /// Returns true if Supabase is reachable, false on any network/503/521 error.
+  Future<bool> _isSupabaseHealthy() async {
+    try {
+      await _client
+          .from('hotel_pms_config')
+          .select('property_id')
+          .limit(1)
+          .timeout(const Duration(seconds: 5));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Retries [fn] up to [_kMaxRetries] times on transient ClientException
+  /// ("Failed to fetch" / network errors). Waits [_kRetryBaseDelay] * attempt
+  /// between each attempt. Throws the last error if all retries fail.
+  Future<T> _withRetry<T>(Future<T> Function() fn, {String label = ''}) async {
+    Object? lastError;
+    for (int attempt = 0; attempt <= _kMaxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (e) {
+        lastError = e;
+        final isTransient = e.toString().contains('Failed to fetch') ||
+            e.toString().contains('ClientException') ||
+            e.toString().contains('503') ||
+            e.toString().contains('PGRST002');
+        if (!isTransient || attempt == _kMaxRetries) rethrow;
+        final delay = _kRetryBaseDelay * (attempt + 1);
+        debugPrint('[PmsSyncService] Retry ${attempt + 1}/$_kMaxRetries for $label in ${delay.inMilliseconds}ms...');
+        await Future.delayed(delay);
+      }
+    }
+    throw lastError!;
   }
 
   /// Stops the automatic polling loop.
@@ -96,6 +181,7 @@ class PmsSyncService {
     }
     _lastSeenModifiedAt.clear();
     _lastSeenStatus.clear();
+    _deltaWatermark = null; // Reset so next session starts fresh with cold-start
   }
 
   /// Ingests all physical rooms from PMS directly into Supabase `rooms` table.
@@ -117,33 +203,50 @@ class PmsSyncService {
         return 0;
       }
 
-      // Query existing rooms in Supabase for this property
+      // Fetch existing rooms WITH type+floor so we can detect actual changes.
+      // Previously we ran UPDATE for every room every time — now we only write
+      // rows where something actually changed, making idle cycles 0-write.
       final existingRows = await _client
           .from('rooms')
-          .select('room_id, room_number')
+          .select('room_id, room_number, type, floor')
           .eq('property_id', propertyId);
 
-      final Map<String, String> existingMap = {
+      // room_number → { room_id, type, floor }
+      final Map<String, Map<String, dynamic>> existingMap = {
         for (final r in (existingRows as List))
-          r['room_number']?.toString() ?? '': r['room_id']?.toString() ?? '',
+          if (r['room_number'] != null)
+            r['room_number'].toString(): r as Map<String, dynamic>,
       };
 
       int upsertedCount = 0;
+      int skippedCount = 0;
       final List<Map<String, dynamic>> newRoomsToInsert = [];
 
       for (final r in rooms) {
         if (r.roomNumber.isEmpty) continue;
-        final roomId = existingMap[r.roomNumber];
+        final existing = existingMap[r.roomNumber];
         final roomType = r.categoryName ?? (r.categoryCode.isNotEmpty ? r.categoryCode : 'Standard');
 
-        if (roomId != null) {
-          // Update room category & floor if needed
-          await _client.from('rooms').update({
-            'type': roomType,
-            if (r.floor != null) 'floor': r.floor,
-            'is_active': true,
-          }).eq('room_id', roomId);
-          upsertedCount++;
+        if (existing != null) {
+          final roomId = existing['room_id'] as String;
+          final storedType = existing['type'] as String? ?? '';
+          final storedFloor = existing['floor']?.toString();
+          final incomingFloor = r.floor?.toString();
+
+          // ⚡ CHANGE DETECTION: only UPDATE if type or floor actually changed
+          final typeChanged = storedType != roomType;
+          final floorChanged = r.floor != null && storedFloor != incomingFloor;
+
+          if (typeChanged || floorChanged) {
+            await _client.from('rooms').update({
+              'type': roomType,
+              if (r.floor != null) 'floor': r.floor,
+              'is_active': true,
+            }).eq('room_id', roomId);
+            upsertedCount++;
+          } else {
+            skippedCount++; // Nothing changed — skip this room entirely (0 DB write)
+          }
         } else {
           newRoomsToInsert.add({
             'property_id': propertyId,
@@ -161,7 +264,7 @@ class PmsSyncService {
         upsertedCount += newRoomsToInsert.length;
       }
 
-      debugPrint('[PmsSyncService] Successfully synchronized $upsertedCount physical rooms into Supabase.');
+      debugPrint('[PmsSyncService] Physical rooms: $upsertedCount updated/inserted, $skippedCount unchanged (skipped).');
       return upsertedCount;
     } catch (e) {
       debugPrint('[PmsSyncService] Failed to sync physical rooms: $e');
@@ -204,72 +307,65 @@ class PmsSyncService {
         '[PmsSyncService] Starting sync for hotel $propertyId using ${context.adapter.provider} (${context.propertyCode})...',
       );
 
-      // Always use a date window so Apaleo returns ALL statuses including CheckedOut.
-      // Without from/to, Apaleo defaults to upcoming/active only and silently omits
-      // reservations that were checked out today.
+      // ── DELTA SYNC ALGORITHM ──────────────────────────────────────────────────
+      // COLD START: _deltaWatermark is null on first run or after stopPeriodicSync().
+      //   → Do a full Stay-window fetch (today-2d to today+30d) to build the baseline.
+      //   → This happens ONCE per admin session.
+      //
+      // DELTA CYCLES: _deltaWatermark is set after each successful cycle.
+      //   → Fetch ONLY reservations modified since the watermark (dateFilter=Modification).
+      //   → With 1 hotel + idle guests, this returns 0-1 records.
+      //   → 0-1 records = 0-1 DB upserts vs previous 510 per cycle.
       final now = DateTime.now();
-      final effectiveFrom = from ?? now.subtract(const Duration(days: 2));  // 2 days back
-      final effectiveTo = to ?? now.add(const Duration(days: 30));           // 30 days forward
+      final List<CanonicalReservation> allReservations;
 
-      // Primary fetch: all reservations in the stay window (Confirmed, InHouse, CheckedOut, Canceled)
-      final reservations = await context.adapter.fetchReservations(
-        propertyCode: context.propertyCode,
-        from: effectiveFrom,
-        to: effectiveTo,
-        dateFilter: 'Stay',
-      );
+      final bool isColdStart = _deltaWatermark == null || from != null;
 
-      // Secondary targeted fetch: recently modified reservations (past 48 h) that are CheckedOut.
-      List<CanonicalReservation> recentCheckouts = [];
-      try {
-        recentCheckouts = await context.adapter.fetchReservations(
+      if (isColdStart) {
+        // ── COLD START: Full baseline fetch ────────────────────────────────────
+        debugPrint('[PmsSyncService] 🔁 COLD START — fetching full reservation window...');
+        final effectiveFrom = from ?? now.subtract(const Duration(days: 2));
+        final effectiveTo = to ?? now.add(const Duration(days: 30));
+
+        final baseFetch = await context.adapter.fetchReservations(
           propertyCode: context.propertyCode,
-          from: now.subtract(const Duration(hours: 48)),
-          to: now.add(const Duration(hours: 2)),
-          statuses: ['CheckedOut'],
+          from: effectiveFrom,
+          to: effectiveTo,
+          dateFilter: 'Stay',
+        );
+        allReservations = baseFetch;
+        debugPrint('[PmsSyncService] Cold start fetched ${allReservations.length} reservations.');
+      } else {
+        // ── DELTA CYCLE: Modification-filter fetch since last watermark ─────────
+        // Subtract 30 seconds from watermark as a safety overlap to avoid
+        // missing records modified exactly at the boundary (clock skew).
+        final deltaFrom = _deltaWatermark!.subtract(const Duration(seconds: 30));
+        debugPrint('[PmsSyncService] ⚡ DELTA SYNC — fetching changes since ${deltaFrom.toUtc().toIso8601String()}...');
+
+        final deltaFetch = await context.adapter.fetchReservations(
+          propertyCode: context.propertyCode,
+          from: deltaFrom,
+          to: now.add(const Duration(minutes: 5)), // small future buffer
           dateFilter: 'Modification',
         );
-        debugPrint('[PmsSyncService] Recent CheckedOut fetch: ${recentCheckouts.length} reservations.');
-      } catch (e) {
-        debugPrint('[PmsSyncService] Recent CheckedOut fetch (non-fatal): $e');
-      }
+        allReservations = deltaFetch;
+        debugPrint('[PmsSyncService] ⚡ DELTA SYNC — ${allReservations.length} reservations changed since last sync.');
 
-      // Tertiary targeted fetch: recently Canceled reservations (past 48 h).
-      // Apaleo excludes Canceled from the Stay date-filter by default, so we
-      // must explicitly request them via Modification filter to catch PMS cancellations.
-      List<CanonicalReservation> recentCancellations = [];
-      try {
-        recentCancellations = await context.adapter.fetchReservations(
-          propertyCode: context.propertyCode,
-          from: now.subtract(const Duration(hours: 48)),
-          to: now.add(const Duration(hours: 2)),
-          statuses: ['Canceled'],
-          dateFilter: 'Modification',
-        );
-        debugPrint('[PmsSyncService] Recent Canceled fetch: ${recentCancellations.length} reservations.');
-      } catch (e) {
-        debugPrint('[PmsSyncService] Recent Canceled fetch (non-fatal): $e');
-      }
-
-      // Merge: deduplicate by pmsReservationId (recentCheckouts + recentCancellations prioritized first
-      // so the latest PMS status wins over the primary Stay-window fetch)
-      final seen = <String>{};
-      final allReservations = <CanonicalReservation>[];
-      for (final r in [...recentCancellations, ...recentCheckouts, ...reservations]) {
-        if (seen.add(r.pmsReservationId)) {
-          allReservations.add(r);
+        // If nothing changed, short-circuit immediately — no DB work needed.
+        if (allReservations.isEmpty) {
+          _deltaWatermark = now;
+          _isSyncing = false;
+          return const PmsSyncResult(isSuccess: true, totalFetched: 0, totalSynced: 0);
         }
       }
 
 
-      debugPrint('[PmsSyncService] Fetched ${allReservations.length} total reservations from PMS (primary: ${reservations.length}, recent checkouts: ${recentCheckouts.length}).');
+      debugPrint('[PmsSyncService] Fetched ${allReservations.length} total reservations from PMS.');
 
       int skippedCount = 0;
       for (final res in allReservations) {
         try {
-          // ── FAST PATH: skip if PMS reports nothing has changed since last cycle ──
-          // If pmsModifiedAt matches our cached value AND cached status is already Ended,
-          // there is guaranteed nothing to do — skip all 14+ DB queries for this reservation.
+          // Fast path: skip unchanged Ended reservations (cache hit, no DB work)
           if (res.pmsModifiedAt != null && res.pmsReservationId.isNotEmpty) {
             final cachedMod = _lastSeenModifiedAt[res.pmsReservationId];
             final cachedStatus = _lastSeenStatus[res.pmsReservationId];
@@ -277,13 +373,16 @@ class PmsSyncService {
                 cachedMod.isAtSameMomentAs(res.pmsModifiedAt!) &&
                 cachedStatus == 'Ended') {
               skippedCount++;
-              continue; // zero DB queries — reservation is already Ended and unchanged
+              continue;
             }
           }
 
-          await _ingestSingleReservation(
-            propertyId: propertyId,
-            res: res,
+          await _withRetry(
+            () => _ingestSingleReservation(
+              propertyId: propertyId,
+              res: res,
+            ),
+            label: res.bookingReference,
           );
 
           // Update cache after successful ingest
@@ -291,7 +390,6 @@ class PmsSyncService {
             if (res.pmsModifiedAt != null) {
               _lastSeenModifiedAt[res.pmsReservationId] = res.pmsModifiedAt!;
             }
-            // Determine what status we wrote to Concigo
             final concigoStatus = (res.status == 'Canceled' || res.status == 'CheckedOut')
                 ? 'Ended'
                 : (res.status == 'InHouse' ? 'Active' : 'Upcoming');
@@ -303,11 +401,13 @@ class PmsSyncService {
           debugPrint('[PmsSyncService] Failed to ingest reservation ${res.bookingReference}: $e');
         }
       }
+
       if (skippedCount > 0) {
         debugPrint('[PmsSyncService] ⚡ Skipped $skippedCount unchanged/Ended reservations (cache hit).');
       }
 
       _lastSyncTime = DateTime.now();
+      _deltaWatermark = now; // ⚡ Advance watermark — next cycle fetches ONLY changes after this point
       return PmsSyncResult(
         isSuccess: true,
         totalFetched: allReservations.length,
@@ -315,6 +415,7 @@ class PmsSyncService {
         failedCount: errorCount,
       );
     } catch (e) {
+
       debugPrint('[PmsSyncService] Critical error during PMS sync: $e');
       return PmsSyncResult(
         isSuccess: false,
@@ -837,19 +938,45 @@ class PmsSyncService {
         }
       }
 
-      // Attach to stay_rooms if not already attached
-      final existingStayRoom = await _client
+      // Attach to stay_rooms if not already attached.
+      // Use .limit(1) instead of .maybeSingle() to tolerate any pre-existing
+      // duplicate rows gracefully (avoids PGRST 406 when >1 row matches).
+      final existingStayRoomRows = await _client
           .from('stay_rooms')
           .select('id')
           .eq('stay_id', stayId)
           .eq('room_id', roomId)
-          .maybeSingle();
+          .limit(1) as List;
 
-      if (existingStayRoom == null) {
+      if (existingStayRoomRows.isEmpty) {
+        // No existing link — insert fresh
         await _client.from('stay_rooms').insert({
           'stay_id': stayId,
           'room_id': roomId,
         });
+      } else {
+        // Already linked — deduplicate any accidental duplicate rows silently.
+        // Keep the first row (lowest id) and remove any extras.
+        try {
+          final allDupes = await _client
+              .from('stay_rooms')
+              .select('id')
+              .eq('stay_id', stayId)
+              .eq('room_id', roomId) as List;
+          if (allDupes.length > 1) {
+            final idsToDelete = allDupes
+                .skip(1)
+                .map((r) => r['id'] as String)
+                .toList();
+            await _client
+                .from('stay_rooms')
+                .delete()
+                .inFilter('id', idsToDelete);
+            debugPrint('[PmsSyncService] Deduplicated ${idsToDelete.length} extra stay_rooms row(s) for stay $stayId / room $roomId');
+          }
+        } catch (_) {
+          // Non-fatal — dedup failure does not break sync
+        }
       }
 
       // If stay is Active (InHouse), ensure the room is marked as booked/occupied

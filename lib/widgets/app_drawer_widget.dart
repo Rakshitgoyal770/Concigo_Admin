@@ -21,6 +21,7 @@ class AppDrawerWidget extends StatelessWidget {
     required this.onLogout,
   });
 
+
   Color _getRoleColor() {
     switch (role) {
       case 'SUPERADMIN':
@@ -31,25 +32,17 @@ class AppDrawerWidget extends StatelessWidget {
         return AppTheme.managerColor;
       case 'SERVICE_EMPLOYEE':
         return AppTheme.employeeColor;
+      case 'SPA_MANAGER':
+      case 'SPA_EMPLOYEE':
+        return AppTheme.spaColor;
+      case 'LAUNDRY_MANAGER':
+      case 'LAUNDRY_EMPLOYEE':
+        return AppTheme.laundryColor;
       default:
         return AppTheme.primary;
     }
   }
 
-  Color _getRoleBgColor() {
-    switch (role) {
-      case 'SUPERADMIN':
-        return AppTheme.superAdminContainer;
-      case 'RECEPTION_DESK':
-        return AppTheme.receptionContainer;
-      case 'SERVICE_MANAGER':
-        return AppTheme.managerContainer;
-      case 'SERVICE_EMPLOYEE':
-        return AppTheme.employeeContainer;
-      default:
-        return AppTheme.primaryContainer;
-    }
-  }
 
   String _getRoleLabel() {
     switch (role) {
@@ -78,24 +71,23 @@ class AppDrawerWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final roleColor = _getRoleColor();
-    final roleBgColor = _getRoleBgColor();
 
     return Drawer(
       width: MediaQuery.of(context).size.width * 0.72,
       child: Column(
         children: [
-          // Header
+          // Header — Concigo Deep Navy brand
           Container(
             width: double.infinity,
             padding: EdgeInsets.only(
-              top: MediaQuery.of(context).padding.top + 24,
-              bottom: 24,
-              left: 24,
-              right: 24,
+              top: MediaQuery.of(context).padding.top + 20,
+              bottom: 20,
+              left: 22,
+              right: 22,
             ),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [Color(0xFF3730A3), Color(0xFF4F46E5)],
+                colors: [Color(0xFF0A1628), Color(0xFF1E3A5F)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -103,16 +95,39 @@ class AppDrawerWidget extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Concigo wordmark
                 Row(
                   children: [
+                    Image.asset(
+                      'assets/images/concigo_logo_transparent.png',
+                      height: 14,
+                      width: 14,
+                      color: AppTheme.brandGold,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      'CONCIGO',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.brandGold,
+                        letterSpacing: 2.5,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    // Avatar with role color ring
                     Container(
-                      width: 52,
-                      height: 52,
+                      width: 48,
+                      height: 48,
                       decoration: BoxDecoration(
-                        color: Colors.white.withAlpha(30),
+                        color: roleColor.withAlpha(30),
                         borderRadius: BorderRadius.circular(100),
                         border: Border.all(
-                          color: Colors.white.withAlpha(80),
+                          color: roleColor.withAlpha(120),
                           width: 2,
                         ),
                       ),
@@ -120,9 +135,9 @@ class AppDrawerWidget extends StatelessWidget {
                         child: Text(
                           _getInitials(),
                           style: GoogleFonts.plusJakartaSans(
-                            fontSize: 20,
+                            fontSize: 18,
                             fontWeight: FontWeight.w700,
-                            color: Colors.white,
+                            color: roleColor,
                           ),
                         ),
                       ),
@@ -135,29 +150,30 @@ class AppDrawerWidget extends StatelessWidget {
                           Text(
                             employeeName,
                             style: GoogleFonts.plusJakartaSans(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
                               color: Colors.white,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          const SizedBox(height: 2),
+                          const SizedBox(height: 3),
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,
-                              vertical: 3,
+                              vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.white.withAlpha(25),
+                              color: roleColor.withAlpha(25),
                               borderRadius: BorderRadius.circular(100),
+                              border: Border.all(color: roleColor.withAlpha(60)),
                             ),
                             child: Text(
                               _getRoleLabel(),
                               style: GoogleFonts.plusJakartaSans(
-                                fontSize: 11,
+                                fontSize: 10,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.white.withAlpha(230),
+                                color: roleColor,
                                 letterSpacing: 0.2,
                               ),
                             ),
@@ -167,22 +183,22 @@ class AppDrawerWidget extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 Row(
                   children: [
                     const Icon(
-                      Icons.business_rounded,
-                      size: 14,
-                      color: Colors.white60,
+                      Icons.location_city_rounded,
+                      size: 12,
+                      color: Colors.white38,
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 5),
                     Expanded(
                       child: Text(
                         propertyName,
                         style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13,
+                          fontSize: 12,
                           fontWeight: FontWeight.w400,
-                          color: Colors.white70,
+                          color: Colors.white54,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

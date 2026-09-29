@@ -27,26 +27,41 @@ serve(async (req) => {
       }
     }
 
-    const payload = await req.json() as { topic: string; message?: Record<string, unknown>; entity?: Record<string, unknown> }
-    const topic = payload.topic ?? ''
-    console.log(`[apaleo-webhook] Received: ${topic}`)
+    const payload = await req.json() as Record<string, unknown>
+    const topic = ((payload.topic as string) ?? '').trim()
+    const eventType = ((payload.type as string) ?? '').toLowerCase().trim()
+    console.log(`[apaleo-webhook] Received topic: ${topic}, type: ${eventType}`)
 
-    // Extract reservation ID from payload
-    const entity = payload.message ?? payload.entity ?? {}
-    const reservationId = (entity.id ?? entity.reservationId ?? entity.Id) as string | undefined
+    // Extract reservation ID from payload.
+    // Apaleo standard webhook sends:
+    // { "topic": "Reservation", "type": "checked-out", "data": { "entityId": "OZYMCBLM-1" } }
+    const dataObj = (payload.data as Record<string, unknown>) ?? {}
+    const entityObj = (payload.message ?? payload.entity ?? {}) as Record<string, unknown>
+    const reservationId = (
+      dataObj.entityId ??
+      payload.entityId ??
+      dataObj.id ??
+      entityObj.id ??
+      entityObj.reservationId ??
+      entityObj.Id ??
+      payload.reservationId ??
+      (typeof payload.id === 'string' && payload.id.includes('-') && payload.id.length <= 15 ? payload.id : undefined)
+    ) as string | undefined
 
     if (!reservationId) {
       console.warn('[apaleo-webhook] No reservation ID in payload:', JSON.stringify(payload))
       return new Response(JSON.stringify({ ok: true, note: 'no reservation id' }), { status: 200 })
     }
 
-    // Fast-path: if topic explicitly signals cancellation, handle immediately
-    // without needing to re-fetch the reservation from Apaleo.
-    // This prevents silent misses when the subsequent API call fails.
+    // Fast-path: if topic or type explicitly signals cancellation / no-show
     const topicSignalsCancellation = topic === 'Reservations/Cancelled' ||
       topic === 'reservations/cancelled' ||
       topic === 'Reservations/NoShow' ||
-      topic === 'reservations/no-show'
+      topic === 'reservations/no-show' ||
+      eventType === 'canceled' ||
+      eventType === 'cancelled' ||
+      eventType === 'noshow' ||
+      eventType === 'no-show'
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
@@ -254,25 +269,38 @@ async function ingestReservation(
   // Resolve user
   const guestUserId = await resolveUser(supabase, guest)
 
-  // Check existing stay via PMS tag
+  // ── RACE-SAFE LOOKUP ────────────────────────────────────────────────────────
+  // Step 1: Find existing stay via PMS tag in checkin_requests (most reliable)
   let stayId: string | null = null
-  const { data: crRows } = await supabase.from('checkin_requests').select('stay_id, stay(status)').eq('remark', pmsTag).limit(1)
+  const { data: crRows } = await supabase.from('checkin_requests')
+    .select('stay_id, stay(status)').eq('remark', pmsTag).limit(1)
   if (crRows?.length) {
     const existingStatus = (crRows[0].stay as Record<string, unknown>)?.status
-    if (existingStatus === 'Ended') { console.log(`[apaleo-webhook] Stay Ended. No resurrection.`); return }
+    if (existingStatus === 'Ended') {
+      console.log(`[apaleo-webhook] Stay Ended. No resurrection.`)
+      return
+    }
     stayId = crRows[0].stay_id as string
   }
 
+  // Step 2: Fallback — find active/upcoming stay for same guest & arrival date
   if (!stayId && guestUserId) {
     const { data: existing } = await supabase.from('stay').select('stay_id, status')
-      .eq('hotel_id', propertyId).eq('main_user_id', guestUserId).eq('check_in_date', checkInStr).neq('status', 'Ended').limit(1)
+      .eq('hotel_id', propertyId).eq('main_user_id', guestUserId)
+      .eq('check_in_date', checkInStr).neq('status', 'Ended').limit(1)
     if (existing?.length) stayId = existing[0].stay_id as string
   }
 
+  // ── UPDATE OR CREATE STAY ────────────────────────────────────────────────────
   if (stayId) {
     const { data: curr } = await supabase.from('stay').select('status').eq('stay_id', stayId).maybeSingle()
     const effectiveStatus = (curr?.status === 'Active' && stayStatus !== 'Ended') ? 'Active' : stayStatus
-    await supabase.from('stay').update({ check_out_date: checkOutStr, status: effectiveStatus, updated_at: new Date().toISOString(), ...(guestUserId ? { main_user_id: guestUserId } : {}) }).eq('stay_id', stayId)
+    await supabase.from('stay').update({
+      check_out_date: checkOutStr,
+      status: effectiveStatus,
+      updated_at: new Date().toISOString(),
+      ...(guestUserId ? { main_user_id: guestUserId } : {}),
+    }).eq('stay_id', stayId)
 
     if (effectiveStatus === 'Ended') {
       await supabase.from('stay_guests').update({ status: 'Ended', updated_at: new Date().toISOString() }).eq('stay_id', stayId)
@@ -284,14 +312,27 @@ async function ingestReservation(
       }
     }
   } else {
+    // No existing stay found — create a new one.
+    // NOTE: The unique index on checkin_requests(remark WHERE remark LIKE 'PMS:%')
+    // prevents a second concurrent call from creating a duplicate CR for the same
+    // reservation. If this insert races against another call, the CR upsert below
+    // will hit the unique constraint and update the existing CR instead.
     const { data: newStay, error } = await supabase.from('stay')
-      .insert({ hotel_id: propertyId, check_in_date: checkInStr, check_out_date: checkOutStr, status: stayStatus, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...(guestUserId ? { main_user_id: guestUserId } : {}) })
+      .insert({
+        hotel_id: propertyId,
+        check_in_date: checkInStr,
+        check_out_date: checkOutStr,
+        status: stayStatus,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        ...(guestUserId ? { main_user_id: guestUserId } : {}),
+      })
       .select('stay_id').single()
     if (error) throw error
     stayId = newStay.stay_id as string
   }
 
-  // Ensure stay_guests entry without onConflict error
+  // Ensure stay_guests entry
   if (guestUserId && stayId) {
     const { data: existingGuests } = await supabase
       .from('stay_guests').select('id').eq('stay_id', stayId).eq('user_id', guestUserId).limit(1)
@@ -300,21 +341,57 @@ async function ingestReservation(
     }
   }
 
-  // Ensure checkin_request — and keep its status in sync with stay status
+  // ── RACE-SAFE CHECKIN_REQUEST UPSERT ────────────────────────────────────────
+  // The unique partial index on checkin_requests(remark WHERE remark LIKE 'PMS:%')
+  // ensures only one CR per reservation. If two concurrent calls race here, the
+  // second INSERT is rejected by the DB. We handle that by falling back to UPDATE.
   if (resId && stayId && guestUserId) {
-    const { data: existing } = await supabase.from('checkin_requests').select('id, remark, status').eq('stay_id', stayId).limit(1)
-    if (existing?.length) {
-      // FIX: always sync status when stay transitions (Upcoming→Active on checkin, Active→Ended on checkout)
-      // Previously only remark was updated — checkin_request stayed 'pending' after PMS check-in
-      const crUpdate: Record<string, unknown> = { updated_at: new Date().toISOString() }
-      if (existing[0].remark !== pmsTag) crUpdate.remark = pmsTag
-      if (stayStatus === 'Active' && existing[0].status !== 'approved') crUpdate.status = 'approved'
-      if (stayStatus === 'Ended' && existing[0].status !== 'cancelled') crUpdate.status = 'cancelled'
-      if (Object.keys(crUpdate).length > 1) { // more than just updated_at
-        await supabase.from('checkin_requests').update(crUpdate).eq('id', existing[0].id)
+    const crStatus = stayStatus === 'Active' ? 'approved' : 'pending'
+    const crPayload = {
+      stay_id: stayId,
+      main_user_id: guestUserId,
+      status: crStatus,
+      checkin_code: String(1000 + (Date.now() % 9000)),
+      remark: pmsTag,
+      submitted_req: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    // Try insert first
+    const { error: crInsertErr } = await supabase.from('checkin_requests').insert(crPayload)
+
+    if (crInsertErr) {
+      if (crInsertErr.code === '23505') {
+        // Unique violation — CR already exists for this PMS tag.
+        // This is the race condition being caught. Update the existing CR instead.
+        console.log(`[apaleo-webhook] CR for ${pmsTag} already exists (race caught). Updating instead.`)
+        const { data: existingCr } = await supabase.from('checkin_requests')
+          .select('id, status, stay_id').eq('remark', pmsTag).maybeSingle()
+        if (existingCr) {
+          // If the winning CR points to a different stay, delete the orphan stay we created
+          if (existingCr.stay_id !== stayId) {
+            console.log(`[apaleo-webhook] Orphan stay ${stayId} detected. Deleting and using winner ${existingCr.stay_id}`)
+            await supabase.from('stay').delete().eq('stay_id', stayId)
+            stayId = existingCr.stay_id as string
+          }
+          // Sync status on the winning CR
+          const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+          if (stayStatus === 'Active' && existingCr.status !== 'approved') updates.status = 'approved'
+          await supabase.from('checkin_requests').update(updates).eq('id', existingCr.id)
+        }
+      } else {
+        console.warn(`[apaleo-webhook] CR insert error for ${pmsTag}:`, crInsertErr.message)
       }
     } else {
-      await supabase.from('checkin_requests').insert({ stay_id: stayId, main_user_id: guestUserId, status: stayStatus === 'Active' ? 'approved' : 'pending', checkin_code: String(1000 + (Date.now() % 9000)), remark: pmsTag, submitted_req: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      // CR inserted successfully. Sync status on any older CR for this stay too.
+      const { data: allCrs } = await supabase.from('checkin_requests')
+        .select('id, status').eq('stay_id', stayId).neq('remark', pmsTag).limit(5)
+      for (const cr of allCrs ?? []) {
+        if (stayStatus === 'Active' && cr.status !== 'approved') {
+          await supabase.from('checkin_requests').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', cr.id)
+        }
+      }
     }
   }
 

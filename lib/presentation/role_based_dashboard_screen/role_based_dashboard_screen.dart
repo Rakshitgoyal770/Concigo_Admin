@@ -43,28 +43,6 @@ class _RoleBasedDashboardScreenState extends State<RoleBasedDashboardScreen> {
   int _selectedDrawerIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  Color _getRoleColor() {
-    switch (widget.role) {
-      case 'SUPERADMIN':
-        return AppTheme.superAdminColor;
-      case 'RECEPTION_DESK':
-        return AppTheme.receptionColor;
-      case 'SERVICE_MANAGER':
-        return AppTheme.managerColor;
-      case 'SERVICE_EMPLOYEE':
-        return AppTheme.employeeColor;
-      case 'SPA_MANAGER':
-        return const Color(0xFF7C3AED);
-      case 'SPA_EMPLOYEE':
-        return const Color(0xFF7C3AED);
-      case 'LAUNDRY_MANAGER':
-        return const Color(0xFF0891B2);
-      case 'LAUNDRY_EMPLOYEE':
-        return const Color(0xFF0891B2);
-      default:
-        return AppTheme.primary;
-    }
-  }
 
   List<DrawerItem> _getDrawerItems() {
     switch (widget.role) {
@@ -240,10 +218,12 @@ class _RoleBasedDashboardScreenState extends State<RoleBasedDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Dark navy app bar → white status bar icons
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.dark,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
       ),
     );
 
