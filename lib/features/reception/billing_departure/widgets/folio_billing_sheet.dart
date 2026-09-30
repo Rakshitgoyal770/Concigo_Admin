@@ -5,7 +5,6 @@ import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
 import '../../../../core/widgets/luxury_button.dart';
 import '../../../../core/widgets/luxury_text_field.dart';
-import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../data/providers/supabase_providers.dart';
 import '../../../../data/providers/reception_providers.dart';
 

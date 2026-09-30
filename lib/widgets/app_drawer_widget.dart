@@ -26,6 +26,8 @@ class AppDrawerWidget extends StatelessWidget {
     switch (role) {
       case 'SUPERADMIN':
         return AppTheme.superAdminColor;
+      case 'RECEPTION':
+      case 'RECEPTIONIST':
       case 'RECEPTION_DESK':
         return AppTheme.receptionColor;
       case 'SERVICE_MANAGER':
@@ -48,6 +50,8 @@ class AppDrawerWidget extends StatelessWidget {
     switch (role) {
       case 'SUPERADMIN':
         return 'Super Admin';
+      case 'RECEPTION':
+      case 'RECEPTIONIST':
       case 'RECEPTION_DESK':
         return 'Reception Desk';
       case 'SERVICE_MANAGER':

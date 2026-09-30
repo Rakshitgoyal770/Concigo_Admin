@@ -258,6 +258,7 @@ class _RoleBasedDashboardScreenState extends State<RoleBasedDashboardScreen> {
         );
       case 'RECEPTION':
       case 'RECEPTION_DESK':
+      case 'RECEPTIONIST':
         return ReceptionShell(
           employeeName: widget.employeeName,
           propertyName: widget.propertyName,
