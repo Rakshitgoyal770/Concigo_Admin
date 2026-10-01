@@ -89,15 +89,21 @@ class LuxuryButton extends StatelessWidget {
           Icon(icon, size: 16, color: fg),
           const SizedBox(width: 8),
         ],
-        Text(
-          text,
-          style: AppTypography.labelLarge.copyWith(
-            color: fg,
-            fontWeight: FontWeight.w600,
+        Flexible(
+          child: Text(
+            text,
+            style: AppTypography.labelLarge.copyWith(
+              color: fg,
+              fontWeight: FontWeight.w600,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],
     );
+
+    final isCompact = height != null && height! < 38;
 
     final widget = ElevatedButton(
       onPressed: isLoading ? null : onPressed,
@@ -109,7 +115,11 @@ class LuxuryButton extends StatelessWidget {
         elevation: 0,
         shadowColor: Colors.transparent,
         side: border,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        padding: EdgeInsets.symmetric(
+          horizontal: isCompact ? 10 : 18,
+          vertical: isCompact ? 0 : 12,
+        ),
+        minimumSize: height != null ? Size(0, height!) : null,
         shape: RoundedRectangleBorder(borderRadius: AppSpacing.roundedMd),
       ),
       child: buttonContent,

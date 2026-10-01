@@ -47,7 +47,7 @@ class _ArrivalsCheckinViewState extends ConsumerState<ArrivalsCheckinView> with 
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isMobile = constraints.maxWidth < 650;
+        final isMobile = constraints.maxWidth < 820;
 
         return SingleChildScrollView(
           padding: EdgeInsets.all(isMobile ? AppSpacing.md : AppSpacing.xxl),

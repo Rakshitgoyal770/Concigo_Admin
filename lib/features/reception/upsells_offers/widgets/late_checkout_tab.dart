@@ -418,11 +418,12 @@ class _LateCheckoutTabState extends ConsumerState<LateCheckoutTab> {
                         final int remaining = limit != null ? (limit - claimedPasses).clamp(0, 9999) : 0;
 
                         return LuxuryCard(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          child: LayoutBuilder(
+                            builder: (context, cardConstraints) {
+                              final isNarrow = cardConstraints.maxWidth < 620;
+
+                              final leadingIcon = Container(
                                 width: 38,
                                 height: 38,
                                 decoration: BoxDecoration(
@@ -437,68 +438,68 @@ class _LateCheckoutTabState extends ConsumerState<LateCheckoutTab> {
                                   color: isActive ? AppColors.purple : AppColors.textMuted,
                                   size: 20,
                                 ),
-                              ),
-                              AppSpacing.gapH12,
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text(cat, style: AppTypography.labelLarge.copyWith(fontWeight: FontWeight.w700)),
-                                        const SizedBox(width: 8),
-                                        LuxuryBadge(
-                                          label: isActive ? 'Enabled' : 'Disabled',
-                                          variant: isActive ? LuxuryBadgeVariant.purple : LuxuryBadgeVariant.neutral,
-                                          isSmall: true,
-                                        ),
-                                      ],
+                              );
+
+                              final catHeader = Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      cat,
+                                      style: AppTypography.labelLarge.copyWith(fontWeight: FontWeight.w700),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    const SizedBox(height: 3),
-                                    Wrap(
-                                      spacing: 6,
-                                      runSpacing: 4,
-                                      crossAxisAlignment: WrapCrossAlignment.center,
-                                      children: [
-                                        Text(
-                                          '${catRooms.length} rooms total',
-                                          style: AppTypography.bodySmall.copyWith(fontSize: 11, color: AppColors.textSecondary),
-                                        ),
-                                        const Text('·', style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: isSoldOut
-                                                ? AppColors.departureLight
-                                                : (limit != null ? AppColors.purpleLight : AppColors.surfaceSubtle),
-                                            borderRadius: BorderRadius.circular(5),
-                                            border: Border.all(
-                                              color: isSoldOut
-                                                  ? AppColors.departure.withValues(alpha: 0.3)
-                                                  : (limit != null ? AppColors.purple.withValues(alpha: 0.25) : AppColors.border),
-                                            ),
-                                          ),
-                                          child: Text(
-                                            limit != null
-                                                ? (isSoldOut
-                                                    ? '$claimedPasses / $limit Claimed (Sold Out)'
-                                                    : '$claimedPasses / $limit Claimed ($remaining left)')
-                                                : 'Unlimited ($claimedPasses Claimed)',
-                                            style: AppTypography.bodySmall.copyWith(
-                                              fontSize: 10.5,
-                                              fontWeight: FontWeight.w700,
-                                              color: isSoldOut
-                                                  ? AppColors.departure
-                                                  : (limit != null ? AppColors.purple : AppColors.textSecondary),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
+                                  ),
+                                  const SizedBox(width: 8),
+                                  LuxuryBadge(
+                                    label: isActive ? 'Enabled' : 'Disabled',
+                                    variant: isActive ? LuxuryBadgeVariant.purple : LuxuryBadgeVariant.neutral,
+                                    isSmall: true,
+                                  ),
+                                ],
+                              );
+
+                              final roomAndLimitSub = Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    '${catRooms.length} rooms total',
+                                    style: AppTypography.bodySmall.copyWith(fontSize: 11, color: AppColors.textSecondary),
+                                  ),
+                                  const Text('·', style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: isSoldOut
+                                          ? AppColors.departureLight
+                                          : (limit != null ? AppColors.purpleLight : AppColors.surfaceSubtle),
+                                      borderRadius: BorderRadius.circular(5),
+                                      border: Border.all(
+                                        color: isSoldOut
+                                            ? AppColors.departure.withValues(alpha: 0.3)
+                                            : (limit != null ? AppColors.purple.withValues(alpha: 0.25) : AppColors.border),
+                                      ),
                                     ),
-                                  ],
-                                ),
-                              ),
-                              InkWell(
+                                    child: Text(
+                                      limit != null
+                                          ? (isSoldOut
+                                              ? '$claimedPasses / $limit Claimed (Sold Out)'
+                                              : '$claimedPasses / $limit Claimed ($remaining left)')
+                                          : 'Unlimited ($claimedPasses Claimed)',
+                                      style: AppTypography.bodySmall.copyWith(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: isSoldOut
+                                            ? AppColors.departure
+                                            : (limit != null ? AppColors.purple : AppColors.textSecondary),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+
+                              final priceBtn = InkWell(
                                 onTap: () => _showEditOfferDialog(
                                   context,
                                   propId,
@@ -520,7 +521,7 @@ class _LateCheckoutTabState extends ConsumerState<LateCheckoutTab> {
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       Column(
-                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        crossAxisAlignment: isNarrow ? CrossAxisAlignment.start : CrossAxisAlignment.end,
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           Text(
@@ -545,39 +546,93 @@ class _LateCheckoutTabState extends ConsumerState<LateCheckoutTab> {
                                     ],
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 10),
-                              Switch.adaptive(
-                                value: isActive,
-                                activeThumbColor: AppColors.purple,
-                                onChanged: (val) async {
-                                  setState(() {
-                                    _localActiveStatus[cat] = val;
-                                  });
-                                  await SupabaseService.instance.upsertCategoryEarlyLateOffer(
-                                    propertyId: propId,
-                                    type: 'late_out',
-                                    category: cat,
-                                    price: price,
-                                    limit: limit,
-                                    isActive: val,
-                                  );
-                                  ref.invalidate(lateCheckoutOffersProvider);
-                                },
-                              ),
-                              const SizedBox(width: 4),
-                              IconButton(
-                                icon: const Icon(Icons.restart_alt_rounded, size: 19, color: AppColors.purple),
-                                tooltip: 'Reset Claimed Passes Quota (Start Fresh Batch)',
-                                onPressed: () => _confirmResetOfferClaims(context, propId, cat, offerId, limit),
-                              ),
-                              const SizedBox(width: 2),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline, size: 18, color: AppColors.departure),
-                                tooltip: 'Delete Category Offer',
-                                onPressed: () => _confirmDeleteOffer(context, propId, cat, offerId),
-                              ),
-                            ],
+                              );
+
+                              final actionIcons = Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Switch.adaptive(
+                                    value: isActive,
+                                    activeThumbColor: AppColors.purple,
+                                    onChanged: (val) async {
+                                      setState(() {
+                                        _localActiveStatus[cat] = val;
+                                      });
+                                      await SupabaseService.instance.upsertCategoryEarlyLateOffer(
+                                        propertyId: propId,
+                                        type: 'late_out',
+                                        category: cat,
+                                        price: price,
+                                        limit: limit,
+                                        isActive: val,
+                                      );
+                                      ref.invalidate(lateCheckoutOffersProvider);
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.restart_alt_rounded, size: 19, color: AppColors.purple),
+                                    tooltip: 'Reset Claimed Passes Quota',
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: () => _confirmResetOfferClaims(context, propId, cat, offerId, limit),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline, size: 18, color: AppColors.departure),
+                                    tooltip: 'Delete Category Offer',
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: () => _confirmDeleteOffer(context, propId, cat, offerId),
+                                  ),
+                                ],
+                              );
+
+                              if (isNarrow) {
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        leadingIcon,
+                                        AppSpacing.gapH12,
+                                        Expanded(child: catHeader),
+                                      ],
+                                    ),
+                                    AppSpacing.gapV8,
+                                    roomAndLimitSub,
+                                    AppSpacing.gapV12,
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
+                                      crossAxisAlignment: WrapCrossAlignment.center,
+                                      children: [
+                                        priceBtn,
+                                        actionIcons,
+                                      ],
+                                    ),
+                                  ],
+                                );
+                              }
+
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  leadingIcon,
+                                  AppSpacing.gapH12,
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        catHeader,
+                                        const SizedBox(height: 3),
+                                        roomAndLimitSub,
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  priceBtn,
+                                  const SizedBox(width: 8),
+                                  actionIcons,
+                                ],
+                              );
+                            },
                           ),
                         );
                       },

@@ -14,6 +14,8 @@ import './widgets/laundry_employee_dashboard_widget.dart';
 import '../../services/supabase_service.dart';
 import '../manage_inventory/manage_inventory_screen.dart';
 import '../../features/reception/shell/reception_shell.dart';
+import '../../widgets/role_switcher_dialog.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class RoleBasedDashboardScreen extends StatefulWidget {
   final String role;
@@ -229,6 +231,9 @@ class _RoleBasedDashboardScreenState extends State<RoleBasedDashboardScreen> {
 
     final isTablet = MediaQuery.of(context).size.width >= 600;
 
+    final hasMultipleRoles = (SupabaseService.instance.currentSession?.authorizedRoles.length ?? 0) > 1;
+    final isReception = const ['RECEPTION', 'RECEPTION_DESK', 'RECEPTIONIST'].contains(widget.role);
+
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: AppTheme.background,
@@ -240,7 +245,73 @@ class _RoleBasedDashboardScreenState extends State<RoleBasedDashboardScreen> {
         items: _getDrawerItems(),
         onLogout: _handleLogout,
       ),
-      body: _buildRoleDashboard(isTablet),
+      body: Stack(
+        children: [
+          _buildRoleDashboard(isTablet),
+          if (!isReception && hasMultipleRoles)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => RoleSwitcherDialog.show(context),
+                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+                        ),
+                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.22),
+                            blurRadius: 6,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                        border: Border(
+                          left: BorderSide(color: const Color(0xFF38BDF8).withValues(alpha: 0.4), width: 0.8),
+                          right: BorderSide(color: const Color(0xFF38BDF8).withValues(alpha: 0.4), width: 0.8),
+                          bottom: BorderSide(color: const Color(0xFF38BDF8).withValues(alpha: 0.4), width: 0.8),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 15,
+                            color: Color(0xFF38BDF8),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'WORKSTATION SHUTTER',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.8,
+                              color: const Color(0xFFE2E8F0),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 15,
+                            color: Color(0xFF38BDF8),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

@@ -121,7 +121,10 @@ class _FolioBillingSheetState extends ConsumerState<FolioBillingSheet> {
       backgroundColor: AppColors.surface,
       surfaceTintColor: Colors.transparent,
       child: Container(
-        width: 640,
+        constraints: BoxConstraints(
+          maxWidth: 640,
+          maxHeight: MediaQuery.of(context).size.height * 0.90,
+        ),
         padding: const EdgeInsets.all(AppSpacing.xxl),
         child: SingleChildScrollView(
           child: Column(
@@ -132,27 +135,32 @@ class _FolioBillingSheetState extends ConsumerState<FolioBillingSheet> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryLight,
-                          borderRadius: AppSpacing.roundedMd,
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryLight,
+                            borderRadius: AppSpacing.roundedMd,
+                          ),
+                          child: const Icon(Icons.receipt_long_rounded, color: AppColors.primary, size: 22),
                         ),
-                        child: const Icon(Icons.receipt_long_rounded, color: AppColors.primary, size: 22),
-                      ),
-                      AppSpacing.gapH12,
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Guest Folio & Billing', style: AppTypography.titleMedium),
-                          Text('Room $roomNum • $guestName', style: AppTypography.bodySmall),
-                        ],
-                      ),
-                    ],
+                        AppSpacing.gapH12,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Guest Folio & Billing', style: AppTypography.titleMedium, overflow: TextOverflow.ellipsis),
+                              Text('Room $roomNum • $guestName', style: AppTypography.bodySmall, overflow: TextOverflow.ellipsis),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+                  const SizedBox(width: 8),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.close, size: 20),

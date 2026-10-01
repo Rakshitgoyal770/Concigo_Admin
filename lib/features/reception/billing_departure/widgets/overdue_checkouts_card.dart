@@ -210,9 +210,11 @@ class OverdueCheckoutsCard extends ConsumerWidget {
               children: [
                 const Icon(Icons.check_circle_outline, color: AppColors.success, size: 18),
                 AppSpacing.gapH8,
-                Text(
-                  'No overdue checkouts. All in-house stays are within schedule.',
-                  style: AppTypography.bodySmall.copyWith(color: AppColors.success),
+                Expanded(
+                  child: Text(
+                    'No overdue checkouts. All in-house stays are within schedule.',
+                    style: AppTypography.bodySmall.copyWith(color: AppColors.success),
+                  ),
                 ),
               ],
             ),
@@ -221,11 +223,13 @@ class OverdueCheckoutsCard extends ConsumerWidget {
 
         final count = overdueStays.length;
 
-        return LuxuryCard(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          borderColor: const Color(0xFFF59E0B),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: LuxuryCard(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            borderColor: const Color(0xFFF59E0B),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -431,9 +435,10 @@ class OverdueCheckoutsCard extends ConsumerWidget {
               ),
             ],
           ),
-        );
-      },
-      loading: () => const SizedBox.shrink(),
+        ),
+      );
+    },
+    loading: () => const SizedBox.shrink(),
       error: (_, __) => const SizedBox.shrink(),
     );
   }

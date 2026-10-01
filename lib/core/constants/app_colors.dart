@@ -1,74 +1,75 @@
 import 'package:flutter/material.dart';
 
-/// Five-Star Luxury Hospitality Workstation Color System for Concigo
+/// Five-Star Modern Hospitality Workstation Color System for Concigo
+/// Theme: Modern Sapphire & Champagne Gold (Vibrant, Light, High-Clarity)
 class AppColors {
   AppColors._();
 
-  // Backgrounds & Surfaces (Warm Ivory / Pearl & Crisp White)
-  static const Color background = Color(0xFFF7F5F1); // Warm Ivory / Pearl
-  static const Color surface = Color(0xFFFFFFFF);    // Pure Crisp White
+  // Backgrounds & Surfaces (Airy Slate-Blue & Pure White Floating Cards)
+  static const Color background = Color(0xFFF1F5F9);      // Soft Airy Slate-Blue (replaces stark white/gray)
+  static const Color surface = Color(0xFFFFFFFF);         // Pure Crisp Floating White
   static const Color surfaceElevated = Color(0xFFFFFFFF);
-  static const Color surfaceSubtle = Color(0xFFEFECE6); // Warm Pearl fill
-  static const Color surfaceHover = Color(0xFFF2EFE9);
+  static const Color surfaceSubtle = Color(0xFFE2E8F0);   // Crisp Clean Slate Fill
+  static const Color surfaceHover = Color(0xFFEDF2F7);
 
-  // Primary Brand Accent (Deep Sophisticated Teal)
-  static const Color primary = Color(0xFF174A4A);       // Deep Luxury Teal
-  static const Color primaryLight = Color(0xFFEBF2F2);  // Soft Teal Wash
-  static const Color primaryDark = Color(0xFF0F3434);
-  static const Color primaryAccent = Color(0xFF1F5E5E);
+  // Primary Brand Accent (Vibrant Royal Sapphire)
+  static const Color primary = Color(0xFF1D4ED8);         // Vibrant Royal Sapphire Blue
+  static const Color primaryLight = Color(0xFFEFF6FF);    // Soft Periwinkle Wash (glowing interactive state)
+  static const Color primaryDark = Color(0xFF1E3A8A);     // Deep Sapphire
+  static const Color primaryAccent = Color(0xFF2563EB);   // Active Sapphire Blue
 
-  // Secondary Accent (Muted Champagne / Warm Brass)
-  static const Color brass = Color(0xFFB79A68);         // Warm Brass
-  static const Color brassLight = Color(0xFFF7F3EB);
-  static const Color brassBorder = Color(0xFFE5D7C0);
+  // Secondary Accent (Signature Champagne Gold / Warm Brass)
+  static const Color brass = Color(0xFFD97706);           // Warm Radiant Gold
+  static const Color brassLight = Color(0xFFFFFBEB);      // Soft Golden Cream Wash
+  static const Color brassBorder = Color(0xFFFDE68A);     // Delicate Gold Border
 
-  // Semantic Status Colors (Muted, Sophisticated & Non-Jarring)
-  static const Color success = Color(0xFF5D8A72);       // Muted Sage (Checked In, Paid, Ready)
-  static const Color successLight = Color(0xFFEEF5F1);
-  static const Color successBorder = Color(0xFFC8E0D2);
+  // Semantic Status Colors (Vibrant, Fresh & High-Clarity)
+  static const Color success = Color(0xFF059669);         // Crisp Fresh Emerald (Vacant, Paid, Ready)
+  static const Color successLight = Color(0xFFECFDF5);    // Soft Emerald Glow
+  static const Color successBorder = Color(0xFFA7F3D0);
 
-  static const Color attention = Color(0xFFB88746);     // Muted Amber (KYC Review, Cleaning)
-  static const Color attentionLight = Color(0xFFFDF7EE);
-  static const Color attentionBorder = Color(0xFFEED8B8);
+  static const Color attention = Color(0xFFD97706);       // Warm Amber (KYC Review, Cleaning in Progress)
+  static const Color attentionLight = Color(0xFFFFFBEB);  // Soft Amber Glow
+  static const Color attentionBorder = Color(0xFFFDE68A);
 
-  static const Color departure = Color(0xFF9B4B52);     // Muted Burgundy (Checkout, Folio Pending, Urgent)
-  static const Color departureLight = Color(0xFFFBF1F2);
-  static const Color departureBorder = Color(0xFFE8C5C8);
+  static const Color departure = Color(0xFFDC2626);       // Crisp Rose Crimson (Checkout, Urgent, OOO)
+  static const Color departureLight = Color(0xFFFEF2F2);  // Soft Rose Wash
+  static const Color departureBorder = Color(0xFFFECACA);
 
-  static const Color info = Color(0xFF3F6E7A);          // Muted Ocean / Slate
-  static const Color infoLight = Color(0xFFEDF4F6);
-  static const Color infoBorder = Color(0xFFC4DCE2);
+  static const Color info = Color(0xFF0284C7);            // Sky Azure
+  static const Color infoLight = Color(0xFFF0F9FF);
+  static const Color infoBorder = Color(0xFFBAE6FD);
 
-  static const Color purple = Color(0xFF6B5B95);        // Upgrades & Privilege
-  static const Color purpleLight = Color(0xFFF4F2F8);
-  static const Color purpleBorder = Color(0xFFD8D2E8);
+  static const Color purple = Color(0xFF7C3AED);          // Royal Purple (Upgrades & VIP)
+  static const Color purpleLight = Color(0xFFF5F3FF);
+  static const Color purpleBorder = Color(0xFFDDD6FE);
 
-  // Typography & Content (Deep Charcoal & Refined Warm Grays)
-  static const Color textPrimary = Color(0xFF202522);   // Deep Charcoal
-  static const Color textSecondary = Color(0xFF66706A); // Refined Slate Gray
-  static const Color textMuted = Color(0xFF919B95);     // Muted Gray
+  // Typography & Content (Deep Slate Charcoal — high contrast, never dull)
+  static const Color textPrimary = Color(0xFF0F172A);     // Deep Obsidian Slate
+  static const Color textSecondary = Color(0xFF334155);   // Crisp Slate
+  static const Color textMuted = Color(0xFF64748B);       // Cool Slate Gray
   static const Color textInverted = Color(0xFFFFFFFF);
 
-  // Borders & Hairline Dividers
-  static const Color border = Color(0xFFE6E2DC);        // Warm Subtle Hairline Border
-  static const Color borderSubtle = Color(0xFFEFECE7);  // Micro Divider
-  static const Color borderFocus = Color(0xFF174A4A);
+  // Borders & Hairline Dividers (Soft Clean Contrast)
+  static const Color border = Color(0xFFCBD5E1);          // Visible, Clean Slate Border
+  static const Color borderSubtle = Color(0xFFE2E8F0);    // Micro Hairline
+  static const Color borderFocus = Color(0xFF2563EB);     // Sapphire Focus Ring
 
-  // Shadows (Soft, Natural Diffusion)
+  // Shadows (Soft, Natural Atmospheric Diffusion)
   static const BoxShadow shadowSm = BoxShadow(
-    color: Color(0x08202522),
+    color: Color(0x0A0F172A),
     blurRadius: 4,
     offset: Offset(0, 1),
   );
 
   static const BoxShadow shadowMd = BoxShadow(
-    color: Color(0x0C202522),
+    color: Color(0x100F172A),
     blurRadius: 10,
     offset: Offset(0, 3),
   );
 
   static const BoxShadow shadowLg = BoxShadow(
-    color: Color(0x10202522),
+    color: Color(0x180F172A),
     blurRadius: 20,
     offset: Offset(0, 6),
   );

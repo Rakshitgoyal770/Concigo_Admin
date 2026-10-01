@@ -8,6 +8,7 @@ import 'package:sms_autofill/sms_autofill.dart';
 import '../../routes/app_routes.dart';
 import '../../services/supabase_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/role_switcher_dialog.dart';
 import './widgets/otp_input_widget.dart';
 import './widgets/step_indicator_widget.dart';
 
@@ -203,18 +204,18 @@ class _LoginVerificationScreenState extends State<LoginVerificationScreen>
         return;
       }
 
-      // Step 2: Auto-lookup employee by phone number (no role filter)
-      final employee = await SupabaseService.instance.verifyEmployeeByPhone(
+      // Step 2: Auto-lookup all active roles for this phone number
+      final roles = await SupabaseService.instance.verifyEmployeeRolesByPhone(
         _e164Phone,
       );
 
       if (!mounted) return;
 
-      if (employee == null) {
+      if (roles.isEmpty) {
         setState(() => _isVerifying = false);
         Fluttertoast.showToast(
           msg:
-              'No active employee found with this number. Please contact your administrator.',
+              'No active employee profile found with this number. Please contact your administrator.',
           backgroundColor: AppTheme.error,
           textColor: Colors.white,
           toastLength: Toast.LENGTH_LONG,
@@ -222,32 +223,32 @@ class _LoginVerificationScreenState extends State<LoginVerificationScreen>
         return;
       }
 
-      // S2 FIX: Explicit guard — ensure employee is active even if DB filter
-      // behaved unexpectedly (e.g., RLS policy change or stale cache).
-      if (employee['is_active'] != true) {
-        setState(() => _isVerifying = false);
-        Fluttertoast.showToast(
-          msg: 'Your account has been deactivated. Please contact your administrator.',
-          backgroundColor: AppTheme.error,
-          textColor: Colors.white,
-          toastLength: Toast.LENGTH_LONG,
+      setState(() => _isVerifying = false);
+
+      // If user has multiple authorized roles, show the Role Selector Dialog!
+      if (roles.length > 1) {
+        RoleSwitcherDialog.show(
+          context,
+          isInitialLogin: true,
+          roles: roles,
         );
         return;
       }
 
-      // Step 3: Extract property name from joined data
+      // Single role: Automatically build session and navigate
+      final employee = roles.first;
       final propertyData = employee['hotel_property'] as Map<String, dynamic>?;
-      final propertyName = propertyData?['name'] as String? ?? '';
+      final propertyName = (employee['property_name'] as String?) ??
+          (propertyData?['name'] as String?) ??
+          'Concigo Property';
 
-      // Step 4: Build session
       SupabaseService.instance.buildSession(
         employee: employee,
         propertyName: propertyName,
+        allRoles: roles,
       );
 
       final session = SupabaseService.instance.currentSession!;
-
-      setState(() => _isVerifying = false);
       Fluttertoast.showToast(
         msg: 'Welcome back, ${session.fullName}!',
         backgroundColor: AppTheme.success,

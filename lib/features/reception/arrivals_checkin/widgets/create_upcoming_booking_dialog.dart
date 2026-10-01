@@ -245,7 +245,10 @@ class _CreateUpcomingBookingDialogState extends ConsumerState<CreateUpcomingBook
           final isNarrow = constraints.maxWidth < 420;
 
           return Container(
-            width: 560,
+            constraints: BoxConstraints(
+              maxWidth: 560,
+              maxHeight: MediaQuery.of(context).size.height * 0.90,
+            ),
             padding: const EdgeInsets.all(AppSpacing.xl),
             child: SingleChildScrollView(
               child: Column(

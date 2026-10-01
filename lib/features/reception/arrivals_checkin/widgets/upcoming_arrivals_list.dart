@@ -281,7 +281,10 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
               ),
               if (isMobile) ...[
                 AppSpacing.gapV12,
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     LiveHeartbeatBadge(
                       lastPulseTime: _lastPulseTime,
@@ -290,20 +293,16 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                       label: 'LIVE',
                       onTap: () => _pulseHeartbeat(silent: false),
                     ),
-                    AppSpacing.gapH8,
-                    Expanded(
-                      child: LuxuryButton(
-                        text: '+ New Booking',
-                        variant: LuxuryButtonVariant.outline,
-                        icon: Icons.add_circle_outline_rounded,
-                        isExpanded: true,
-                        onPressed: () {
-                          showDialog(
-                            context: context,
-                            builder: (_) => const CreateUpcomingBookingDialog(),
-                          );
-                        },
-                      ),
+                    LuxuryButton(
+                      text: '+ New Booking',
+                      variant: LuxuryButtonVariant.outline,
+                      icon: Icons.add_circle_outline_rounded,
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (_) => const CreateUpcomingBookingDialog(),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -601,9 +600,10 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                                     return Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 6,
+                                          crossAxisAlignment: WrapCrossAlignment.center,
                                           children: [
                                             Container(
                                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -617,25 +617,18 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                                                 style: AppTypography.monoRoom.copyWith(fontSize: 12),
                                               ),
                                             ),
-                                            Wrap(
-                                              spacing: 6,
-                                              runSpacing: 4,
-                                              alignment: WrapAlignment.end,
-                                              children: [
-                                                LuxuryBadge(
-                                                  label: arrivalBadgeLabel,
-                                                  variant: arrivalVariant,
-                                                  icon: arrivalIcon,
-                                                  isSmall: true,
-                                                ),
-                                                LuxuryBadge(
-                                                  label: isKycDone ? 'KYC Done' : 'KYC Pending',
-                                                  variant: isKycDone
-                                                      ? LuxuryBadgeVariant.success
-                                                      : LuxuryBadgeVariant.attention,
-                                                  isSmall: true,
-                                                ),
-                                              ],
+                                            LuxuryBadge(
+                                              label: arrivalBadgeLabel,
+                                              variant: arrivalVariant,
+                                              icon: arrivalIcon,
+                                              isSmall: true,
+                                            ),
+                                            LuxuryBadge(
+                                              label: isKycDone ? 'KYC Done' : 'KYC Pending',
+                                              variant: isKycDone
+                                                  ? LuxuryBadgeVariant.success
+                                                  : LuxuryBadgeVariant.attention,
+                                              isSmall: true,
                                             ),
                                           ],
                                         ),

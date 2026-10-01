@@ -104,43 +104,43 @@ class _KycQueueTabState extends ConsumerState<KycQueueTab> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Header Row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryLight,
-                        borderRadius: AppSpacing.roundedMd,
-                      ),
-                      child: const Icon(Icons.verified_user_outlined, size: 20, color: AppColors.primary),
-                    ),
-                    AppSpacing.gapH12,
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('KYC Document Verification Queue', style: AppTypography.titleSmall),
-                          Text(
-                            'Guest government ID documents, companion records & digital check-in approvals',
-                            style: AppTypography.bodySmall,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Row(
-                mainAxisSize: MainAxisSize.min,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 650;
+
+              final titleSection = Row(
                 children: [
-                  // Live Heartbeat Radar & Status Badge
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryLight,
+                      borderRadius: AppSpacing.roundedMd,
+                    ),
+                    child: const Icon(Icons.verified_user_outlined, size: 20, color: AppColors.primary),
+                  ),
+                  AppSpacing.gapH12,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('KYC Document Verification Queue', style: AppTypography.titleSmall),
+                        Text(
+                          'Guest government ID documents, companion records & digital check-in approvals',
+                          style: AppTypography.bodySmall,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+
+              final badgesSection = Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
                   LiveHeartbeatBadge(
                     lastPulseTime: _lastPulseTime,
                     isSyncing: _isSyncing,
@@ -148,16 +148,34 @@ class _KycQueueTabState extends ConsumerState<KycQueueTab> {
                     label: 'LIVE QUEUE',
                     onTap: () => _pulseHeartbeat(silent: false),
                   ),
-                  if (activeRequests.isNotEmpty) ...[
-                    AppSpacing.gapH8,
+                  if (activeRequests.isNotEmpty)
                     LuxuryBadge(
                       label: '${activeRequests.length} Pending',
                       variant: LuxuryBadgeVariant.attention,
                     ),
-                  ],
                 ],
-              ),
-            ],
+              );
+
+              if (isNarrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    titleSection,
+                    AppSpacing.gapV12,
+                    badgesSection,
+                  ],
+                );
+              }
+
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(child: titleSection),
+                  const SizedBox(width: 12),
+                  badgesSection,
+                ],
+              );
+            },
           ),
           AppSpacing.gapV16,
 

@@ -38,7 +38,7 @@ class _UpsellsOffersViewState extends ConsumerState<UpsellsOffersView> with Sing
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isMobile = constraints.maxWidth < 650;
+        final isMobile = constraints.maxWidth < 880;
 
         return SingleChildScrollView(
           padding: EdgeInsets.all(isMobile ? AppSpacing.md : AppSpacing.xxl),

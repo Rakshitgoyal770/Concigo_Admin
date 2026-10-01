@@ -25,137 +25,100 @@ class FrontDeskKpisSection extends ConsumerWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isMobile = constraints.maxWidth < 520;
+        final width = constraints.maxWidth;
 
-        if (isMobile) {
-          return Column(
+        final availableCard = _buildMetricCard(
+          icon: Icons.hotel_rounded,
+          iconColor: AppColors.primary,
+          iconBg: AppColors.primaryLight,
+          count: '${kpis.vacantRooms}',
+          label: 'Available Rooms',
+        );
+
+        final arrivalsCard = _buildMetricCard(
+          icon: Icons.flight_land_rounded,
+          iconColor: AppColors.success,
+          iconBg: AppColors.successLight,
+          count: kpis.expectedArrivals < 10 ? '0${kpis.expectedArrivals}' : '${kpis.expectedArrivals}',
+          label: 'Today Arrivals',
+          onTap: onArrivalsTap,
+        );
+
+        final inHouseCard = _buildMetricCard(
+          icon: Icons.people_outline_rounded,
+          iconColor: AppColors.primary,
+          iconBg: AppColors.surfaceSubtle,
+          count: kpis.occupiedRooms < 10 ? '0${kpis.occupiedRooms}' : '${kpis.occupiedRooms}',
+          label: 'In-House Guests',
+        );
+
+        final departuresCard = _buildMetricCard(
+          icon: Icons.flight_takeoff_rounded,
+          iconColor: AppColors.textSecondary,
+          iconBg: AppColors.surfaceSubtle,
+          count: kpis.dueDepartures < 10 ? '0${kpis.dueDepartures}' : '${kpis.dueDepartures}',
+          label: 'Due Departures',
+          onTap: onBillingTap,
+        );
+
+        final actionCard = _buildMetricCard(
+          icon: Icons.bolt_rounded,
+          iconColor: attentionCount > 0 ? AppColors.attention : AppColors.textMuted,
+          iconBg: attentionCount > 0 ? AppColors.attentionLight : AppColors.surfaceSubtle,
+          count: attentionCount < 10 ? '0$attentionCount' : '$attentionCount',
+          label: 'Action Required',
+          highlightBadge: attentionCount > 0 ? 'ACTION' : null,
+          onTap: onKycTap,
+        );
+
+        // Desktop / Wide Ribbon (>= 720px): All metrics in a single sleek horizontal row
+        if (width >= 720) {
+          return Row(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildMetricCard(
-                      icon: Icons.hotel_rounded,
-                      iconColor: AppColors.primary,
-                      iconBg: AppColors.primaryLight,
-                      count: '${kpis.vacantRooms}',
-                      label: 'Available Rooms',
-                    ),
-                  ),
-                  AppSpacing.gapH12,
-                  Expanded(
-                    child: _buildMetricCard(
-                      icon: Icons.flight_land_rounded,
-                      iconColor: AppColors.success,
-                      iconBg: AppColors.successLight,
-                      count: kpis.expectedArrivals < 10 ? '0${kpis.expectedArrivals}' : '${kpis.expectedArrivals}',
-                      label: 'Today Arrivals',
-                      onTap: onArrivalsTap,
-                    ),
-                  ),
-                ],
-              ),
-              AppSpacing.gapV12,
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildMetricCard(
-                      icon: Icons.people_outline_rounded,
-                      iconColor: AppColors.primary,
-                      iconBg: AppColors.surfaceSubtle,
-                      count: kpis.occupiedRooms < 10 ? '0${kpis.occupiedRooms}' : '${kpis.occupiedRooms}',
-                      label: 'In-House Guests',
-                    ),
-                  ),
-                  AppSpacing.gapH12,
-                  Expanded(
-                    child: _buildMetricCard(
-                      icon: Icons.flight_takeoff_rounded,
-                      iconColor: AppColors.textSecondary,
-                      iconBg: AppColors.surfaceSubtle,
-                      count: kpis.dueDepartures < 10 ? '0${kpis.dueDepartures}' : '${kpis.dueDepartures}',
-                      label: 'Due Departures',
-                      onTap: onBillingTap,
-                    ),
-                  ),
-                ],
-              ),
+              Expanded(child: availableCard),
+              const SizedBox(width: 8),
+              Expanded(child: arrivalsCard),
+              const SizedBox(width: 8),
+              Expanded(child: inHouseCard),
+              const SizedBox(width: 8),
+              Expanded(child: departuresCard),
               if (attentionCount > 0) ...[
-                AppSpacing.gapV12,
-                _buildMetricCard(
-                  icon: Icons.bolt_rounded,
-                  iconColor: AppColors.attention,
-                  iconBg: AppColors.attentionLight,
-                  count: attentionCount < 10 ? '0$attentionCount' : '$attentionCount',
-                  label: 'Action Required (Pre-Checkin & KYC Queue)',
-                  isFullWidth: true,
-                  onTap: onKycTap,
-                ),
+                const SizedBox(width: 8),
+                Expanded(child: actionCard),
               ],
             ],
           );
         }
 
-        return Row(
+        // Compact / Mobile (< 720px): 2-column slim grid with horizontal cards
+        return Column(
           children: [
-            Expanded(
-              child: _buildMetricCard(
-                icon: Icons.hotel_rounded,
-                iconColor: AppColors.primary,
-                iconBg: AppColors.primaryLight,
-                count: '${kpis.vacantRooms}',
-                label: 'Available Rooms',
-              ),
+            Row(
+              children: [
+                Expanded(child: availableCard),
+                const SizedBox(width: 8),
+                Expanded(child: arrivalsCard),
+              ],
             ),
-            AppSpacing.gapH12,
-            Expanded(
-              child: _buildMetricCard(
-                icon: Icons.flight_land_rounded,
-                iconColor: AppColors.primary,
-                iconBg: AppColors.primaryLight,
-                count: kpis.expectedArrivals < 10 ? '0${kpis.expectedArrivals}' : '${kpis.expectedArrivals}',
-                label: 'Today Arrivals',
-                onTap: onArrivalsTap,
-              ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(child: inHouseCard),
+                const SizedBox(width: 8),
+                Expanded(child: departuresCard),
+              ],
             ),
-            AppSpacing.gapH12,
-            Expanded(
-              child: _buildMetricCard(
-                icon: Icons.people_outline_rounded,
-                iconColor: AppColors.primary,
-                iconBg: AppColors.surfaceSubtle,
-                count: kpis.occupiedRooms < 10 ? '0${kpis.occupiedRooms}' : '${kpis.occupiedRooms}',
-                label: 'In-House Guests',
-              ),
-            ),
-            AppSpacing.gapH12,
-            Expanded(
-              child: _buildMetricCard(
-                icon: Icons.flight_takeoff_rounded,
-                iconColor: AppColors.textSecondary,
-                iconBg: AppColors.surfaceSubtle,
-                count: kpis.dueDepartures < 10 ? '0${kpis.dueDepartures}' : '${kpis.dueDepartures}',
-                label: 'Due Departures',
-                onTap: onBillingTap,
-              ),
-            ),
-            AppSpacing.gapH12,
-            Expanded(
-              child: _buildMetricCard(
-                icon: Icons.bolt_rounded,
-                iconColor: attentionCount > 0 ? AppColors.attention : AppColors.textMuted,
-                iconBg: attentionCount > 0 ? AppColors.attentionLight : AppColors.surfaceSubtle,
-                count: attentionCount < 10 ? '0$attentionCount' : '$attentionCount',
-                label: 'Attention Required',
-                highlightBadge: attentionCount > 0 ? 'ACTION' : null,
-                onTap: onKycTap,
-              ),
-            ),
+            if (attentionCount > 0) ...[
+              const SizedBox(height: 6),
+              actionCard,
+            ],
           ],
         );
       },
     );
   }
 
+  /// Compact 5-Star Operational Metric Card — Horizontal Icon + Stat layout
   Widget _buildMetricCard({
     required IconData icon,
     required Color iconColor,
@@ -163,75 +126,84 @@ class FrontDeskKpisSection extends ConsumerWidget {
     required String count,
     required String label,
     String? highlightBadge,
-    bool isFullWidth = false,
     VoidCallback? onTap,
   }) {
     final cardContent = Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: AppSpacing.roundedMd,
+        borderRadius: AppSpacing.roundedSm,
         border: Border.all(
-          color: highlightBadge != null ? AppColors.attention.withValues(alpha: 0.4) : AppColors.border,
-          width: highlightBadge != null ? 1.2 : 0.8,
+          color: highlightBadge != null ? AppColors.attention.withValues(alpha: 0.5) : AppColors.border,
+          width: highlightBadge != null ? 1.0 : 0.8,
         ),
         boxShadow: const [AppColors.shadowSm],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: Row(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  color: iconBg,
-                  borderRadius: AppSpacing.roundedSm,
-                ),
-                child: Center(
-                  child: Icon(icon, size: 16, color: iconColor),
-                ),
-              ),
-              if (highlightBadge != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: AppColors.attention,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    highlightBadge,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.5,
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: iconBg,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Center(
+              child: Icon(icon, size: 15, color: iconColor),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      count,
+                      style: AppTypography.displayNumber.copyWith(
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w700,
+                        height: 1.1,
+                        color: highlightBadge != null ? AppColors.attention : AppColors.textPrimary,
+                      ),
                     ),
-                  ),
+                    if (highlightBadge != null) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: AppColors.attention,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          highlightBadge,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 7.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-            ],
-          ),
-          AppSpacing.gapV8,
-          Text(
-            count,
-            style: AppTypography.displayNumber.copyWith(
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-              color: highlightBadge != null ? AppColors.attention : AppColors.textPrimary,
+                const SizedBox(height: 1),
+                Text(
+                  label,
+                  style: AppTypography.caption.copyWith(
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                    fontSize: 10.5,
+                    height: 1.1,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: AppTypography.caption.copyWith(
-              color: AppColors.textSecondary,
-              fontWeight: FontWeight.w500,
-              fontSize: 11.5,
-            ),
-            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
@@ -240,7 +212,7 @@ class FrontDeskKpisSection extends ConsumerWidget {
     if (onTap != null) {
       return InkWell(
         onTap: onTap,
-        borderRadius: AppSpacing.roundedMd,
+        borderRadius: AppSpacing.roundedSm,
         hoverColor: AppColors.surfaceHover,
         child: cardContent,
       );

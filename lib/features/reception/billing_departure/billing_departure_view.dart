@@ -105,7 +105,10 @@ class BillingDepartureView extends ConsumerWidget {
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Row(
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    crossAxisAlignment: WrapCrossAlignment.center,
                                     children: [
                                       Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -113,45 +116,44 @@ class BillingDepartureView extends ConsumerWidget {
                                           color: AppColors.primaryLight,
                                           borderRadius: AppSpacing.roundedSm,
                                         ),
-                                        child: Text('Room $roomNum', style: AppTypography.monoRoom.copyWith(fontSize: 12)),
+                                        child: Text(
+                                          roomNum.contains(',') ? 'Rooms $roomNum' : 'Room $roomNum',
+                                          style: AppTypography.monoRoom.copyWith(fontSize: 12),
+                                        ),
                                       ),
-                                      AppSpacing.gapH8,
-                                      Expanded(child: Text(guestName, style: AppTypography.labelLarge, overflow: TextOverflow.ellipsis)),
+                                      Text(guestName, style: AppTypography.labelLarge),
                                     ],
                                   ),
                                   AppSpacing.gapV4,
                                   Text('$phone • Tariff: ₹$tariff', style: AppTypography.bodySmall),
                                   AppSpacing.gapV8,
-                                  Row(
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
                                     children: [
-                                      Expanded(
-                                        child: LuxuryButton(
-                                          text: 'Folio & Charges',
-                                          variant: LuxuryButtonVariant.outline,
-                                          height: 32,
-                                          icon: Icons.receipt_long_outlined,
-                                          onPressed: () {
-                                            showDialog(
-                                              context: context,
-                                              builder: (_) => FolioBillingSheet(stay: stay),
-                                            );
-                                          },
-                                        ),
+                                      LuxuryButton(
+                                        text: 'Folio & Charges',
+                                        variant: LuxuryButtonVariant.outline,
+                                        height: 34,
+                                        icon: Icons.receipt_long_outlined,
+                                        onPressed: () {
+                                          showDialog(
+                                            context: context,
+                                            builder: (_) => FolioBillingSheet(stay: stay),
+                                          );
+                                        },
                                       ),
-                                      AppSpacing.gapH8,
-                                      Expanded(
-                                        child: LuxuryButton(
-                                          text: 'Checkout',
-                                          variant: LuxuryButtonVariant.danger,
-                                          height: 32,
-                                          icon: Icons.logout_rounded,
-                                          onPressed: () {
-                                            showDialog(
-                                              context: context,
-                                              builder: (_) => InstantCheckoutModal(stay: stay),
-                                            );
-                                          },
-                                        ),
+                                      LuxuryButton(
+                                        text: 'Checkout',
+                                        variant: LuxuryButtonVariant.danger,
+                                        height: 34,
+                                        icon: Icons.logout_rounded,
+                                        onPressed: () {
+                                          showDialog(
+                                            context: context,
+                                            builder: (_) => InstantCheckoutModal(stay: stay),
+                                          );
+                                        },
                                       ),
                                     ],
                                   ),
@@ -162,27 +164,43 @@ class BillingDepartureView extends ConsumerWidget {
                             return Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.primaryLight,
-                                        borderRadius: AppSpacing.roundedSm,
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primaryLight,
+                                          borderRadius: AppSpacing.roundedSm,
+                                        ),
+                                        child: Text('Room $roomNum', style: AppTypography.monoRoom.copyWith(fontSize: 13)),
                                       ),
-                                      child: Text('Room $roomNum', style: AppTypography.monoRoom.copyWith(fontSize: 13)),
-                                    ),
-                                    AppSpacing.gapH12,
-                                    Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(guestName, style: AppTypography.labelLarge),
-                                        Text('$phone • Tariff: ₹$tariff', style: AppTypography.bodySmall),
-                                      ],
-                                    ),
-                                  ],
+                                      AppSpacing.gapH12,
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              guestName,
+                                              style: AppTypography.labelLarge,
+                                              overflow: TextOverflow.ellipsis,
+                                              maxLines: 1,
+                                            ),
+                                            Text(
+                                              '$phone • Tariff: ₹$tariff',
+                                              style: AppTypography.bodySmall,
+                                              overflow: TextOverflow.ellipsis,
+                                              maxLines: 1,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
+                                const SizedBox(width: 12),
                                 Row(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
                                     LuxuryButton(
                                       text: 'Folio & Charges',

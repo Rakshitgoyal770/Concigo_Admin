@@ -135,21 +135,32 @@ class BellboyQuickQueue extends ConsumerWidget {
                       return Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              Text('Room $roomNum', style: AppTypography.monoRoom.copyWith(fontSize: 14)),
-                              AppSpacing.gapH16,
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(guestName, style: AppTypography.labelLarge),
-                                  const SizedBox(height: 2),
-                                  Text('$bagsCount Bags · Status: ${status.toUpperCase()}', style: AppTypography.caption),
-                                ],
-                              ),
-                            ],
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Text('Room $roomNum', style: AppTypography.monoRoom.copyWith(fontSize: 14)),
+                                AppSpacing.gapH16,
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        guestName,
+                                        style: AppTypography.labelLarge,
+                                        overflow: TextOverflow.ellipsis,
+                                        maxLines: 1,
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text('$bagsCount Bags · Status: ${status.toUpperCase()}', style: AppTypography.caption),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
+                          const SizedBox(width: 12),
                           Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               if (status == 'pending' || status == 'requested' || status == 'called')
                                 LuxuryButton(

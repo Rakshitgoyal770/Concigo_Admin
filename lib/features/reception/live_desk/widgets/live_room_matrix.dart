@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
-import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../data/providers/reception_providers.dart';
 import '../../../../data/providers/supabase_providers.dart';
 
@@ -31,7 +30,7 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(AppSpacing.xl),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: AppSpacing.roundedMd,
@@ -41,76 +40,36 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header + Operational Filter Toolbar
+          // Header + Compact Operational Search Toolbar
           LayoutBuilder(
             builder: (context, headerConstraints) {
               final isCompact = headerConstraints.maxWidth < 650;
 
-              if (isCompact) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Room Inventory & Status Matrix', style: AppTypography.titleSmall),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Live room allocation, housekeeping and availability',
-                      style: AppTypography.caption,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    AppSpacing.gapV12,
-                    SizedBox(
-                      width: double.infinity,
-                      height: 36,
-                      child: TextField(
-                        onChanged: (val) => setState(() => _searchQuery = val.trim()),
-                        style: AppTypography.bodySmall.copyWith(color: AppColors.textPrimary),
-                        decoration: InputDecoration(
-                          hintText: 'Filter room #...',
-                          hintStyle: AppTypography.caption,
-                          prefixIcon: const Icon(Icons.search, size: 16, color: AppColors.textMuted),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          filled: true,
-                          fillColor: AppColors.surfaceSubtle,
-                          border: OutlineInputBorder(
-                            borderRadius: AppSpacing.roundedSm,
-                            borderSide: const BorderSide(color: AppColors.border, width: 0.8),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: AppSpacing.roundedSm,
-                            borderSide: const BorderSide(color: AppColors.border, width: 0.8),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              }
-
               return Row(
                 children: [
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Room Inventory & Status Matrix', style: AppTypography.titleSmall),
-                        const SizedBox(height: 2),
-                        Text('Live room allocation, housekeeping and availability', style: AppTypography.caption),
-                      ],
+                    child: Text(
+                      'Room Inventory & Status Matrix',
+                      style: AppTypography.titleSmall.copyWith(
+                        fontSize: isCompact ? 13.5 : 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 8),
                   SizedBox(
-                    width: 220,
-                    height: 36,
+                    width: isCompact ? 130 : 200,
+                    height: 30,
                     child: TextField(
                       onChanged: (val) => setState(() => _searchQuery = val.trim()),
-                      style: AppTypography.bodySmall.copyWith(color: AppColors.textPrimary),
+                      style: AppTypography.caption.copyWith(color: AppColors.textPrimary, fontSize: 11),
                       decoration: InputDecoration(
-                        hintText: 'Filter room #...',
-                        hintStyle: AppTypography.caption,
-                        prefixIcon: const Icon(Icons.search, size: 16, color: AppColors.textMuted),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        hintText: 'Filter #...',
+                        hintStyle: AppTypography.caption.copyWith(fontSize: 10.5),
+                        prefixIcon: const Icon(Icons.search, size: 14, color: AppColors.textMuted),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                        isDense: true,
                         filled: true,
                         fillColor: AppColors.surfaceSubtle,
                         border: OutlineInputBorder(
@@ -128,7 +87,7 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
               );
             },
           ),
-          AppSpacing.gapV16,
+          const SizedBox(height: 8),
 
           // Status Filter Tabs
           SingleChildScrollView(
@@ -136,20 +95,20 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
             child: Row(
               children: [
                 _buildFilterButton('ALL', 'All Rooms'),
-                AppSpacing.gapH8,
+                const SizedBox(width: 6),
                 _buildFilterButton('VACANT', 'Vacant', dotColor: AppColors.success),
-                AppSpacing.gapH8,
+                const SizedBox(width: 6),
                 _buildFilterButton('OCCUPIED', 'Occupied', dotColor: AppColors.primary),
-                AppSpacing.gapH8,
-                _buildFilterButton('CLEANING', 'Cleaning Required', dotColor: AppColors.attention),
-                AppSpacing.gapH8,
+                const SizedBox(width: 6),
+                _buildFilterButton('CLEANING', 'Cleaning', dotColor: AppColors.attention),
+                const SizedBox(width: 6),
                 _buildFilterButton('MAINTENANCE', 'Out of Order', dotColor: AppColors.departure),
               ],
             ),
           ),
-          AppSpacing.gapV20,
+          const SizedBox(height: 8),
 
-          // Room Matrix Grid
+          // High-Density Room Matrix Grid
           roomsAsync.when(
             data: (rooms) {
               final filtered = rooms.where((r) {
@@ -180,15 +139,20 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
 
               return LayoutBuilder(
                 builder: (context, constraints) {
-                  final crossAxisCount = (constraints.maxWidth / 150).floor().clamp(2, 8);
+                  final isMobileWidth = constraints.maxWidth < 550;
+                  final int crossAxisCount = isMobileWidth
+                      ? (constraints.maxWidth / 90).floor().clamp(3, 4)
+                      : (constraints.maxWidth / 110).floor().clamp(4, 10);
+                  final double childAspectRatio = isMobileWidth ? 1.18 : 1.25;
+
                   return GridView.builder(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: crossAxisCount,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
-                      childAspectRatio: 1.15,
+                      crossAxisSpacing: 6,
+                      mainAxisSpacing: 6,
+                      childAspectRatio: childAspectRatio,
                     ),
                     itemCount: filtered.length,
                     itemBuilder: (context, index) {
@@ -201,13 +165,13 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
             },
             loading: () => const Center(
               child: Padding(
-                padding: EdgeInsets.all(32.0),
+                padding: EdgeInsets.all(24.0),
                 child: CircularProgressIndicator(),
               ),
             ),
             error: (err, _) => Center(
               child: Padding(
-                padding: const EdgeInsets.all(16.0),
+                padding: const EdgeInsets.all(12.0),
                 child: Text('Unable to load rooms: $err', style: TextStyle(color: AppColors.departure)),
               ),
             ),
@@ -224,7 +188,7 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
       onTap: () => setState(() => _statusFilter = key),
       borderRadius: AppSpacing.roundedSm,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
           color: isSelected ? AppColors.surfaceSubtle : Colors.transparent,
           borderRadius: AppSpacing.roundedSm,
@@ -260,6 +224,7 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
     );
   }
 
+  /// High-Density Room Tile — uniform border, 4px left status bar, monospace room number, category tag, popup actions
   Widget _buildRoomTile(Map<String, dynamic> room) {
     final roomId = (room['room_id'] ?? room['id'] ?? '').toString();
     final roomNum = (room['room_number'] ?? room['room_no'] ?? '').toString();
@@ -268,105 +233,158 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
     final rawStatus = (room['status'] as String? ?? (isBooked ? 'OCCUPIED' : 'VACANT')).toUpperCase();
     final status = isBooked ? 'OCCUPIED' : rawStatus;
 
-    LuxuryBadgeVariant badgeVariant;
+    Color statusColor;
     String statusLabel;
 
     if (status == 'OCCUPIED') {
-      badgeVariant = LuxuryBadgeVariant.primary;
+      statusColor = AppColors.primary;
       statusLabel = 'Occupied';
     } else if (status == 'CLEANING' || status == 'NEEDS CLEANING') {
-      badgeVariant = LuxuryBadgeVariant.attention;
+      statusColor = AppColors.attention;
       statusLabel = 'Cleaning';
     } else if (status == 'MAINTENANCE') {
-      badgeVariant = LuxuryBadgeVariant.departure;
+      statusColor = AppColors.departure;
       statusLabel = 'Maint.';
     } else {
-      badgeVariant = LuxuryBadgeVariant.success;
+      statusColor = AppColors.success;
       statusLabel = 'Vacant';
     }
 
     final isVacant = status == 'VACANT' || status == 'AVAILABLE';
 
-    return Container(
-      decoration: BoxDecoration(
+    // Abbreviate category
+    String catAbbr = category.toUpperCase();
+    if (catAbbr.contains('DELUXE')) {
+      catAbbr = 'DLX';
+    } else if (catAbbr.contains('SUITE')) {
+      catAbbr = 'SUI';
+    } else if (catAbbr.contains('KING')) {
+      catAbbr = 'KNG';
+    } else if (catAbbr.contains('SUPERIOR')) {
+      catAbbr = 'SUP';
+    } else if (catAbbr.contains('STANDARD')) {
+      catAbbr = 'STD';
+    } else if (catAbbr.length > 4) {
+      catAbbr = catAbbr.substring(0, 4);
+    }
+
+    final guestName = (room['guest_name'] ?? room['user_name'] ?? '').toString().trim();
+    final String subText = isVacant
+        ? catAbbr
+        : (guestName.isNotEmpty ? guestName.split(' ').first : statusLabel);
+
+    return ClipRRect(
+      borderRadius: AppSpacing.roundedSm,
+      child: Material(
         color: AppColors.surface,
-        borderRadius: AppSpacing.roundedSm,
-        border: Border.all(
-          color: AppColors.border,
-          width: 0.8,
-        ),
-      ),
-      padding: const EdgeInsets.all(10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                roomNum,
-                style: AppTypography.monoRoom.copyWith(fontSize: 15),
-              ),
-              LuxuryBadge(
-                label: statusLabel,
-                variant: badgeVariant,
-                isSmall: true,
-              ),
-            ],
-          ),
-          Text(
-            category,
-            style: AppTypography.caption.copyWith(fontSize: 11),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              PopupMenuButton<String>(
-                tooltip: 'Set Status',
-                icon: const Icon(Icons.more_horiz, size: 16, color: AppColors.textMuted),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(maxWidth: 160),
-                onSelected: (newStatus) async {
-                  await ref.read(roomServiceProvider).updateRoomStatus(roomId, newStatus);
-                  ref.read(receptionRefreshSignalProvider.notifier).state++;
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(value: 'vacant', child: Text('Set Vacant')),
-                  const PopupMenuItem(value: 'occupied', child: Text('Set Occupied')),
-                  const PopupMenuItem(value: 'cleaning', child: Text('Set Cleaning')),
-                  const PopupMenuItem(value: 'maintenance', child: Text('Set Maintenance')),
-                ],
-              ),
-              if (isVacant)
-                InkWell(
-                  onTap: () {
-                    if (widget.onWalkInForRoom != null) {
-                      widget.onWalkInForRoom!(room);
-                    }
-                  },
-                  borderRadius: AppSpacing.roundedSm,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryLight,
-                      borderRadius: AppSpacing.roundedSm,
-                    ),
-                    child: Text(
-                      '+ Walk-In',
-                      style: AppTypography.caption.copyWith(
-                        color: AppColors.primary,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
+        child: InkWell(
+          onTap: () {
+            if (isVacant && widget.onWalkInForRoom != null) {
+              widget.onWalkInForRoom!(room);
+            } else if (widget.onRoomSelected != null) {
+              widget.onRoomSelected!(room);
+            }
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: AppSpacing.roundedSm,
+              border: Border.all(color: AppColors.border, width: 0.8),
+            ),
+            child: Stack(
+              children: [
+                // Left 4px vertical status indicator bar
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 4,
+                  child: Container(color: statusColor),
+                ),
+
+                // Main content
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 5, 4, 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              roomNum,
+                              style: AppTypography.monoRoom.copyWith(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceSubtle,
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(
+                              catAbbr,
+                              style: AppTypography.caption.copyWith(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              subText,
+                              style: AppTypography.caption.copyWith(
+                                fontSize: 10,
+                                fontWeight: isVacant ? FontWeight.w500 : FontWeight.w700,
+                                color: isVacant ? AppColors.textSecondary : statusColor,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: PopupMenuButton<String>(
+                              tooltip: 'Status',
+                              icon: const Icon(Icons.more_vert, size: 14, color: AppColors.textMuted),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(maxWidth: 150),
+                              onSelected: (newStatus) async {
+                                await ref.read(roomServiceProvider).updateRoomStatus(roomId, newStatus);
+                                ref.read(receptionRefreshSignalProvider.notifier).state++;
+                              },
+                              itemBuilder: (context) => [
+                                const PopupMenuItem(value: 'vacant', child: Text('Vacant')),
+                                const PopupMenuItem(value: 'occupied', child: Text('Occupied')),
+                                const PopupMenuItem(value: 'cleaning', child: Text('Cleaning')),
+                                const PopupMenuItem(value: 'maintenance', child: Text('Maintenance')),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-            ],
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
   }

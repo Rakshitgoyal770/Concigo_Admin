@@ -27,7 +27,10 @@ class LiveFrontDeskView extends ConsumerWidget {
         final isMobile = constraints.maxWidth < 650;
 
         return SingleChildScrollView(
-          padding: EdgeInsets.all(isMobile ? AppSpacing.md : AppSpacing.xxl),
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobile ? 10 : 16,
+            vertical: 10,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -37,21 +40,20 @@ class LiveFrontDeskView extends ConsumerWidget {
                 onKycTap: onNavigateToArrivals,
                 onBillingTap: onNavigateToBilling,
               ),
-              AppSpacing.gapV24,
+              const SizedBox(height: 10),
 
-              // Overdue Checkouts Warning Card (if any guest is past 11:00 AM checkout)
+              // Overdue Checkouts Warning Card (self-spacing only when active)
               const OverdueCheckoutsCard(hideIfEmpty: true),
-              AppSpacing.gapV24,
 
               // 2. Main Operational Focus: Live Room Inventory & Status Matrix
               LiveRoomMatrix(
                 onWalkInForRoom: onWalkInWithRoom,
               ),
-              AppSpacing.gapV24,
+              const SizedBox(height: 12),
 
               // 3. Bellboy & Luggage Dispatch Queue
               const BellboyQuickQueue(),
-              AppSpacing.gapV32,
+              const SizedBox(height: 16),
             ],
           ),
         );

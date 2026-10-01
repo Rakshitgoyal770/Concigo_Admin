@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../routes/app_routes.dart';
+import '../services/supabase_service.dart';
+import './role_switcher_dialog.dart';
 
 class AppDrawerWidget extends StatelessWidget {
   final String employeeName;
@@ -121,71 +123,121 @@ class AppDrawerWidget extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    // Avatar with role color ring
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: roleColor.withAlpha(30),
-                        borderRadius: BorderRadius.circular(100),
-                        border: Border.all(
-                          color: roleColor.withAlpha(120),
-                          width: 2,
-                        ),
-                      ),
-                      child: Center(
-                        child: Text(
-                          _getInitials(),
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: roleColor,
+                // User profile card — tap to switch role if multiple roles exist
+                InkWell(
+                  onTap: () {
+                    if ((SupabaseService.instance.currentSession?.authorizedRoles.length ?? 0) > 1) {
+                      Navigator.pop(context);
+                      RoleSwitcherDialog.show(context);
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(10),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        // Avatar with role color ring
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: roleColor.withAlpha(30),
+                            borderRadius: BorderRadius.circular(100),
+                            border: Border.all(
+                              color: roleColor.withAlpha(120),
+                              width: 2,
+                            ),
                           ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            employeeName,
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 3),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: roleColor.withAlpha(25),
-                              borderRadius: BorderRadius.circular(100),
-                              border: Border.all(color: roleColor.withAlpha(60)),
-                            ),
+                          child: Center(
                             child: Text(
-                              _getRoleLabel(),
+                              _getInitials(),
                               style: GoogleFonts.plusJakartaSans(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
                                 color: roleColor,
-                                letterSpacing: 0.2,
                               ),
                             ),
                           ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      employeeName,
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if ((SupabaseService.instance.currentSession?.authorizedRoles.length ?? 0) > 1) ...[
+                                    const SizedBox(width: 6),
+                                    const Icon(
+                                      Icons.keyboard_arrow_down_rounded,
+                                      size: 18,
+                                      color: Colors.white70,
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 3),
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: roleColor.withAlpha(25),
+                                      borderRadius: BorderRadius.circular(100),
+                                      border: Border.all(color: roleColor.withAlpha(60)),
+                                    ),
+                                    child: Text(
+                                      _getRoleLabel(),
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        color: roleColor,
+                                        letterSpacing: 0.2,
+                                      ),
+                                    ),
+                                  ),
+                                  if ((SupabaseService.instance.currentSession?.authorizedRoles.length ?? 0) > 1) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF6366F1).withOpacity(0.35),
+                                        borderRadius: BorderRadius.circular(100),
+                                      ),
+                                      child: Text(
+                                        '${SupabaseService.instance.currentSession!.authorizedRoles.length} ROLES',
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 8.5,
+                                          fontWeight: FontWeight.w800,
+                                          color: const Color(0xFFA5B4FC),
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
                 const SizedBox(height: 14),
                 Row(
@@ -342,6 +394,71 @@ class AppDrawerWidget extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 10),
+                // Switch Role / Workspace button (when user has multiple roles)
+                if ((SupabaseService.instance.currentSession?.authorizedRoles.length ?? 0) > 1) ...[
+                  Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.pop(context);
+                        RoleSwitcherDialog.show(context);
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      splashColor: const Color(0xFFEEF2FF),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 11,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFCBD5E1), width: 0.8),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.switch_account_rounded,
+                              size: 19,
+                              color: Color(0xFF4F46E5),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Switch Workspace',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF1E293B),
+                                    ),
+                                  ),
+                                  Text(
+                                    '${SupabaseService.instance.currentSession!.authorizedRoles.length} roles available',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w500,
+                                      color: const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              size: 13,
+                              color: Color(0xFF94A3B8),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 // Logout button
                 Material(
                   color: Colors.transparent,

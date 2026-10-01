@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
@@ -15,6 +16,7 @@ import '../upsells_offers/upsells_offers_view.dart';
 import '../billing_departure/billing_departure_view.dart';
 import '../walk_in/instant_walk_in_dialog.dart';
 import 'apaleo_connect_dialog.dart';
+import '../../../../widgets/role_switcher_dialog.dart';
 
 class ReceptionShell extends ConsumerStatefulWidget {
   final String employeeName;
@@ -205,9 +207,12 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isMobile = constraints.maxWidth < 720;
+          final authorizedRoles = SupabaseService.instance.currentSession?.authorizedRoles ?? [];
 
-          return Column(
+          return Stack(
             children: [
+              Column(
+                children: [
               // ── TOP WORKSTATION CONSOLE HEADER ─────────────────────────────
               Container(
                 padding: EdgeInsets.symmetric(
@@ -228,15 +233,18 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Container(
-                              width: 34,
-                              height: 34,
-                              decoration: BoxDecoration(
-                                color: AppColors.primary,
-                                borderRadius: AppSpacing.roundedSm,
-                              ),
-                              child: const Center(
-                                child: Icon(Icons.hotel_class_rounded, size: 18, color: AppColors.brass),
+                            InkWell(
+                              onTap: () => setState(() => _currentHubIndex = 0),
+                              borderRadius: BorderRadius.circular(6),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 2),
+                                child: Image.asset(
+                                  'assets/images/concigo_logo_transparent.png',
+                                  height: 32,
+                                  width: 32,
+                                  color: AppColors.primary,
+                                  fit: BoxFit.contain,
+                                ),
                               ),
                             ),
                             AppSpacing.gapH12,
@@ -327,36 +335,120 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                             },
                           ),
 
+                          // Multi-role Top Shutter pull tab for narrow screens
+                          if (constraints.maxWidth < 920 &&
+                              authorizedRoles.length > 1) ...[
+                            InkWell(
+                              onTap: () => RoleSwitcherDialog.show(context),
+                              borderRadius: BorderRadius.circular(16),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0F172A),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: const Color(0xFF38BDF8).withValues(alpha: 0.5),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.keyboard_arrow_down_rounded,
+                                      size: 16,
+                                      color: Color(0xFF38BDF8),
+                                    ),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      '${authorizedRoles.length}',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+
                           if (constraints.maxWidth >= 920) ...[
                             AppSpacing.gapH8,
-                            // Desk Agent Profile Pill
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: AppColors.surfaceSubtle,
-                                borderRadius: AppSpacing.roundedSm,
-                                border: Border.all(color: AppColors.border, width: 0.8),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 8,
-                                    height: 8,
-                                    decoration: const BoxDecoration(
-                                      color: AppColors.success,
-                                      shape: BoxShape.circle,
-                                    ),
+                            // Desk Agent Profile Pill + Shutter Pull Down Trigger
+                            InkWell(
+                              onTap: () {
+                                if (authorizedRoles.length > 1) {
+                                  RoleSwitcherDialog.show(context);
+                                }
+                              },
+                              borderRadius: AppSpacing.roundedSm,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: authorizedRoles.length > 1
+                                      ? const Color(0xFFEEF2FF)
+                                      : AppColors.surfaceSubtle,
+                                  borderRadius: AppSpacing.roundedSm,
+                                  border: Border.all(
+                                    color: authorizedRoles.length > 1
+                                        ? const Color(0xFFC7D2FE)
+                                        : AppColors.border,
+                                    width: 0.8,
                                   ),
-                                  AppSpacing.gapH8,
-                                  Text(
-                                    widget.employeeName.isNotEmpty ? widget.employeeName : 'Front Desk Agent',
-                                    style: AppTypography.labelMedium.copyWith(
-                                      fontWeight: FontWeight.w600,
-                                      color: AppColors.textPrimary,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 8,
+                                      height: 8,
+                                      decoration: const BoxDecoration(
+                                        color: AppColors.success,
+                                        shape: BoxShape.circle,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                    AppSpacing.gapH8,
+                                    Text(
+                                      widget.employeeName.isNotEmpty ? widget.employeeName : 'Front Desk Agent',
+                                      style: AppTypography.labelMedium.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    ),
+                                    if (authorizedRoles.length > 1) ...[
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF4F46E5),
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(
+                                              Icons.keyboard_arrow_down_rounded,
+                                              size: 14,
+                                              color: Colors.white,
+                                            ),
+                                            const SizedBox(width: 2),
+                                            Text(
+                                              '${authorizedRoles.length} ROLES',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.w800,
+                                                letterSpacing: 0.4,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ),
                             ),
                           ],
@@ -403,7 +495,73 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                 child: _buildActiveHubView(),
               ),
             ],
-          );
+          ),
+
+          // ── FLOATING TOP CEILING SHUTTER HANDLE ───────────────────────
+          if (authorizedRoles.length > 1)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => RoleSwitcherDialog.show(context),
+                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+                        ),
+                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.22),
+                            blurRadius: 6,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                        border: Border(
+                          left: BorderSide(color: const Color(0xFF38BDF8).withValues(alpha: 0.4), width: 0.8),
+                          right: BorderSide(color: const Color(0xFF38BDF8).withValues(alpha: 0.4), width: 0.8),
+                          bottom: BorderSide(color: const Color(0xFF38BDF8).withValues(alpha: 0.4), width: 0.8),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 15,
+                            color: Color(0xFF38BDF8),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'WORKSTATION SHUTTER',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.8,
+                              color: const Color(0xFFE2E8F0),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 15,
+                            color: Color(0xFF38BDF8),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
         },
       ),
     );

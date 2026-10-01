@@ -13,6 +13,9 @@ class EmployeeSession {
   final String propertyId;
   final String propertyName;
   final String? serviceDept;
+  final String? serviceName;
+  final String? phoneNumber;
+  final List<Map<String, dynamic>> authorizedRoles;
 
   EmployeeSession({
     required this.empId,
@@ -22,6 +25,9 @@ class EmployeeSession {
     required this.propertyId,
     required this.propertyName,
     this.serviceDept,
+    this.serviceName,
+    this.phoneNumber,
+    this.authorizedRoles = const [],
   });
 
   String get fullName => '$empFirstName $empLastName'.trim();
@@ -34,6 +40,9 @@ class EmployeeSession {
     'propertyId': propertyId,
     'propertyName': propertyName,
     'serviceDept': serviceDept,
+    'serviceName': serviceName,
+    'phoneNumber': phoneNumber,
+    'authorizedRoles': authorizedRoles,
   };
 
   factory EmployeeSession.fromJson(Map<String, dynamic> json) => EmployeeSession(
@@ -44,6 +53,12 @@ class EmployeeSession {
     propertyId: json['propertyId'] as String? ?? '',
     propertyName: json['propertyName'] as String? ?? '',
     serviceDept: json['serviceDept'] as String?,
+    serviceName: json['serviceName'] as String?,
+    phoneNumber: json['phoneNumber'] as String?,
+    authorizedRoles: (json['authorizedRoles'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e as Map))
+            .toList() ??
+        const [],
   );
 
   static String mapDbRoleToAppRole(String dbRole) {
@@ -279,9 +294,9 @@ class SupabaseService {
     }
   }
 
-  /// Verify employee by phone number only — no role filter.
-  /// Returns employee data including property name (via join).
-  Future<Map<String, dynamic>?> verifyEmployeeByPhone(
+  /// Verify employee by phone number — fetches ALL authorized active roles for this phone.
+  /// Returns a list of all role profiles across properties/departments.
+  Future<List<Map<String, dynamic>>> verifyEmployeeRolesByPhone(
     String phoneNumber,
   ) async {
     try {
@@ -308,15 +323,34 @@ class SupabaseService {
             .select(selectFields)
             .eq('phone_no', phone)
             .eq('is_active', true)
-            .isFilter('deleted_at', null)
-            .limit(1);
+            .isFilter('deleted_at', null);
 
         if ((rows as List).isNotEmpty) {
-          return rows.first;
+          final list = List<Map<String, dynamic>>.from(rows);
+          // Enrich with property_name and service_name (e.g. Food, Spa, Laundry)
+          for (final emp in list) {
+            final prop = emp['hotel_property'] as Map<String, dynamic>?;
+            emp['property_name'] = prop?['name'] ?? '';
+
+            final deptId = emp['service_dept']?.toString();
+            if (deptId != null && deptId.isNotEmpty) {
+              try {
+                final sRow = await client
+                    .from('services')
+                    .select('name')
+                    .eq('serv_id', deptId)
+                    .maybeSingle();
+                if (sRow != null) {
+                  emp['service_name'] = sRow['name'];
+                }
+              } catch (_) {}
+            }
+          }
+          return list;
         }
       }
 
-      return null;
+      return [];
     } on PostgrestException catch (e) {
       throw Exception('Employee verification failed: ${e.message}');
     } catch (e) {
@@ -324,12 +358,22 @@ class SupabaseService {
     }
   }
 
+  /// Backward-compatible single employee lookup (returns first role)
+  Future<Map<String, dynamic>?> verifyEmployeeByPhone(
+    String phoneNumber,
+  ) async {
+    final roles = await verifyEmployeeRolesByPhone(phoneNumber);
+    return roles.isNotEmpty ? roles.first : null;
+  }
+
   static const String _sessionStorageKey = 'concigo_admin_session_v1';
 
   void buildSession({
     required Map<String, dynamic> employee,
     required String propertyName,
+    List<Map<String, dynamic>>? allRoles,
   }) {
+    final rolesList = allRoles ?? (currentSession?.authorizedRoles.isNotEmpty == true ? currentSession!.authorizedRoles : [employee]);
     currentSession = EmployeeSession(
       empId: employee['emp_id'] as String,
       empFirstName: (employee['emp_f_name'] as String?) ?? '',
@@ -338,8 +382,25 @@ class SupabaseService {
       propertyId: employee['property_id'] as String,
       propertyName: propertyName,
       serviceDept: employee['service_dept'] as String?,
+      serviceName: employee['service_name'] as String?,
+      phoneNumber: employee['phone_no'] as String?,
+      authorizedRoles: rolesList,
     );
     _persistSession(currentSession!);
+  }
+
+  /// Switch active role in-memory and in persistent storage without requiring OTP
+  void switchActiveRole(Map<String, dynamic> targetEmployee) {
+    if (currentSession == null) return;
+    final propName = (targetEmployee['property_name'] as String?) ??
+        ((targetEmployee['hotel_property'] as Map<String, dynamic>?)?['name'] as String?) ??
+        currentSession!.propertyName;
+
+    buildSession(
+      employee: targetEmployee,
+      propertyName: propName,
+      allRoles: currentSession!.authorizedRoles,
+    );
   }
 
   Future<void> _persistSession(EmployeeSession session) async {

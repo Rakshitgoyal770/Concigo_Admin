@@ -198,7 +198,10 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
           final isNarrow = constraints.maxWidth < 420;
 
           return Container(
-            width: 540,
+            constraints: BoxConstraints(
+              maxWidth: 540,
+              maxHeight: MediaQuery.of(context).size.height * 0.90,
+            ),
             padding: const EdgeInsets.all(AppSpacing.xl),
             child: SingleChildScrollView(
               child: Column(
