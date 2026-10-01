@@ -335,44 +335,6 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                             },
                           ),
 
-                          // Multi-role Top Shutter pull tab for narrow screens
-                          if (constraints.maxWidth < 920 &&
-                              authorizedRoles.length > 1) ...[
-                            InkWell(
-                              onTap: () => RoleSwitcherDialog.show(context),
-                              borderRadius: BorderRadius.circular(16),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF0F172A),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: const Color(0xFF38BDF8).withValues(alpha: 0.5),
-                                    width: 0.8,
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      Icons.keyboard_arrow_down_rounded,
-                                      size: 16,
-                                      color: Color(0xFF38BDF8),
-                                    ),
-                                    const SizedBox(width: 3),
-                                    Text(
-                                      '${authorizedRoles.length}',
-                                      style: GoogleFonts.plusJakartaSans(
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w800,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
 
                           if (constraints.maxWidth >= 920) ...[
                             AppSpacing.gapH8,
@@ -497,74 +459,15 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
             ],
           ),
 
-          // ── FLOATING TOP CEILING SHUTTER HANDLE ───────────────────────
+          // ── FLOATING MINIMAL ANIMATED CEILING HANDLE ───────────────────────
           if (authorizedRoles.length > 1)
             Positioned(
               top: 0,
               left: 0,
               right: 0,
               child: Center(
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () => RoleSwitcherDialog.show(context),
-                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(8)),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3.5),
-                      decoration: BoxDecoration(
-                        color: AppColors.surface,
-                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(8)),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.08),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                        border: Border(
-                          left: BorderSide(color: AppColors.border, width: 0.8),
-                          right: BorderSide(color: AppColors.border, width: 0.8),
-                          bottom: BorderSide(color: AppColors.border, width: 0.8),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            size: 14,
-                            color: Color(0xFF0A1628),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'STATION SWITCHER',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.6,
-                              color: const Color(0xFF0A1628),
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFD4A017),
-                              borderRadius: BorderRadius.circular(3),
-                            ),
-                            child: Text(
-                              '${authorizedRoles.length}',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 8.5,
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                child: _AnimatedShutterChevronHandle(
+                  onTap: () => RoleSwitcherDialog.show(context),
                 ),
               ),
             ),
@@ -648,6 +551,85 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Minimalist luxury ceiling pull tab with gentle animated downward bounce
+class _AnimatedShutterChevronHandle extends StatefulWidget {
+  final VoidCallback onTap;
+
+  const _AnimatedShutterChevronHandle({required this.onTap});
+
+  @override
+  State<_AnimatedShutterChevronHandle> createState() => _AnimatedShutterChevronHandleState();
+}
+
+class _AnimatedShutterChevronHandleState extends State<_AnimatedShutterChevronHandle>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _bounceAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+
+    _bounceAnimation = Tween<double>(begin: 0.0, end: 3.5).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: widget.onTap,
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 3.5),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+            border: Border(
+              left: BorderSide(color: AppColors.border, width: 0.8),
+              right: BorderSide(color: AppColors.border, width: 0.8),
+              bottom: BorderSide(color: AppColors.border, width: 0.8),
+            ),
+          ),
+          child: AnimatedBuilder(
+            animation: _bounceAnimation,
+            builder: (context, child) {
+              return Transform.translate(
+                offset: Offset(0, _bounceAnimation.value),
+                child: child,
+              );
+            },
+            child: const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 20,
+              color: Color(0xFF0A1628), // Deep Obsidian Navy
+            ),
+          ),
         ),
       ),
     );
