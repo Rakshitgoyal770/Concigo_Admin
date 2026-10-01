@@ -11,18 +11,19 @@ class FrontDeskKpisSection extends ConsumerWidget {
   final VoidCallback? onArrivalsTap;
   final VoidCallback? onKycTap;
   final VoidCallback? onBillingTap;
+  final VoidCallback? onBellboyTap;
 
   const FrontDeskKpisSection({
     super.key,
     this.onArrivalsTap,
     this.onKycTap,
     this.onBillingTap,
+    this.onBellboyTap,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final kpis = ref.watch(liveDeskKpiProvider);
-    final attentionCount = kpis.pendingKYC + (kpis.pendingLuggage > 0 ? 1 : 0);
 
     return Container(
       width: double.infinity,
@@ -35,7 +36,7 @@ class FrontDeskKpisSection extends ConsumerWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final isWide = constraints.maxWidth >= 600;
+          final isWide = constraints.maxWidth >= 850;
 
           final items = [
             _buildTickerItem(
@@ -64,16 +65,26 @@ class FrontDeskKpisSection extends ConsumerWidget {
               label: isWide ? 'Due Departures' : 'Dep',
               onTap: onBillingTap,
             ),
-            if (attentionCount > 0)
-              _buildTickerItem(
-                icon: Icons.bolt_rounded,
-                iconColor: AppColors.attention,
-                count: attentionCount < 10 ? '0$attentionCount' : '$attentionCount',
-                label: 'Action',
-                countColor: AppColors.attention,
-                isAlert: true,
-                onTap: onKycTap,
-              ),
+            // Dedicated KYC Approval Requests
+            _buildTickerItem(
+              icon: Icons.verified_user_rounded,
+              iconColor: kpis.pendingKYC > 0 ? AppColors.attention : AppColors.textMuted,
+              count: kpis.pendingKYC < 10 ? '0${kpis.pendingKYC}' : '${kpis.pendingKYC}',
+              label: isWide ? 'KYC Approval' : 'KYC',
+              countColor: kpis.pendingKYC > 0 ? AppColors.attention : null,
+              isAlert: kpis.pendingKYC > 0,
+              onTap: onKycTap,
+            ),
+            // Dedicated Bellboy / Luggage Dispatch Requests
+            _buildTickerItem(
+              icon: Icons.luggage_rounded,
+              iconColor: kpis.pendingLuggage > 0 ? const Color(0xFF6366F1) : AppColors.textMuted,
+              count: kpis.pendingLuggage < 10 ? '0${kpis.pendingLuggage}' : '${kpis.pendingLuggage}',
+              label: isWide ? 'Bellboy Queue' : 'Luggage',
+              countColor: kpis.pendingLuggage > 0 ? const Color(0xFF4F46E5) : null,
+              isAlert: kpis.pendingLuggage > 0,
+              onTap: onBellboyTap,
+            ),
           ];
 
           if (isWide) {

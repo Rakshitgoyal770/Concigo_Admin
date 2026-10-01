@@ -6,7 +6,7 @@ import 'widgets/bellboy_quick_queue.dart';
 import 'widgets/front_desk_kpis.dart';
 import 'widgets/live_room_matrix.dart';
 
-class LiveFrontDeskView extends ConsumerWidget {
+class LiveFrontDeskView extends ConsumerStatefulWidget {
   final VoidCallback? onNavigateToArrivals;
   final VoidCallback? onNavigateToUpsells;
   final VoidCallback? onNavigateToBilling;
@@ -21,12 +21,38 @@ class LiveFrontDeskView extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LiveFrontDeskView> createState() => _LiveFrontDeskViewState();
+}
+
+class _LiveFrontDeskViewState extends ConsumerState<LiveFrontDeskView> {
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _bellboyKey = GlobalKey();
+
+  void _scrollToBellboy() {
+    final ctx = _bellboyKey.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isMobile = constraints.maxWidth < 650;
 
         return SingleChildScrollView(
+          controller: _scrollController,
           padding: EdgeInsets.symmetric(
             horizontal: isMobile ? 10 : 16,
             vertical: 10,
@@ -34,11 +60,12 @@ class LiveFrontDeskView extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 1. High-Level 5-Star Operational KPI Ribbon
+              // 1. High-Level 5-Star Operational KPI Ribbon with KYC & Bellboy requests
               FrontDeskKpisSection(
-                onArrivalsTap: onNavigateToArrivals,
-                onKycTap: onNavigateToArrivals,
-                onBillingTap: onNavigateToBilling,
+                onArrivalsTap: widget.onNavigateToArrivals,
+                onKycTap: widget.onNavigateToArrivals,
+                onBillingTap: widget.onNavigateToBilling,
+                onBellboyTap: _scrollToBellboy,
               ),
               const SizedBox(height: 10),
 
@@ -47,12 +74,15 @@ class LiveFrontDeskView extends ConsumerWidget {
 
               // 2. Main Operational Focus: Live Room Inventory & Status Matrix
               LiveRoomMatrix(
-                onWalkInForRoom: onWalkInWithRoom,
+                onWalkInForRoom: widget.onWalkInWithRoom,
               ),
               const SizedBox(height: 12),
 
               // 3. Bellboy & Luggage Dispatch Queue
-              const BellboyQuickQueue(),
+              KeyedSubtree(
+                key: _bellboyKey,
+                child: const BellboyQuickQueue(),
+              ),
               const SizedBox(height: 16),
             ],
           ),
