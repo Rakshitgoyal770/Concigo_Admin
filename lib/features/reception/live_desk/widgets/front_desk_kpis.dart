@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/constants/app_colors.dart';
-import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
 import '../../../../data/providers/reception_providers.dart';
 
@@ -129,7 +129,7 @@ class FrontDeskKpisSection extends ConsumerWidget {
     VoidCallback? onTap,
   }) {
     final cardContent = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8.5),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: AppSpacing.roundedSm,
@@ -142,14 +142,14 @@ class FrontDeskKpisSection extends ConsumerWidget {
       child: Row(
         children: [
           Container(
-            width: 28,
-            height: 28,
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
               color: iconBg,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(7),
             ),
             child: Center(
-              child: Icon(icon, size: 15, color: iconColor),
+              child: Icon(icon, size: 16, color: iconColor),
             ),
           ),
           const SizedBox(width: 8),
@@ -163,27 +163,29 @@ class FrontDeskKpisSection extends ConsumerWidget {
                   children: [
                     Text(
                       count,
-                      style: AppTypography.displayNumber.copyWith(
-                        fontSize: 16.5,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 18.5,
                         fontWeight: FontWeight.w700,
                         height: 1.1,
                         color: highlightBadge != null ? AppColors.attention : AppColors.textPrimary,
+                        letterSpacing: -0.3,
                       ),
                     ),
                     if (highlightBadge != null) ...[
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 5),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                         decoration: BoxDecoration(
                           color: AppColors.attention,
-                          borderRadius: BorderRadius.circular(3),
+                          borderRadius: BorderRadius.circular(3.5),
                         ),
                         child: Text(
                           highlightBadge,
-                          style: const TextStyle(
+                          style: GoogleFonts.plusJakartaSans(
                             color: Colors.white,
-                            fontSize: 7.5,
+                            fontSize: 8.5,
                             fontWeight: FontWeight.w800,
+                            letterSpacing: 0.3,
                           ),
                         ),
                       ),
@@ -193,11 +195,11 @@ class FrontDeskKpisSection extends ConsumerWidget {
                 const SizedBox(height: 1),
                 Text(
                   label,
-                  style: AppTypography.caption.copyWith(
+                  style: GoogleFonts.plusJakartaSans(
                     color: AppColors.textSecondary,
                     fontWeight: FontWeight.w500,
-                    fontSize: 10.5,
-                    height: 1.1,
+                    fontSize: 11,
+                    height: 1.15,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

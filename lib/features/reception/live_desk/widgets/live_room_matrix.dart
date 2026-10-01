@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
@@ -188,13 +189,13 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
       onTap: () => setState(() => _statusFilter = key),
       borderRadius: AppSpacing.roundedSm,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4.5),
         decoration: BoxDecoration(
           color: isSelected ? AppColors.surfaceSubtle : Colors.transparent,
           borderRadius: AppSpacing.roundedSm,
           border: Border.all(
-            color: isSelected ? AppColors.primary : AppColors.border,
-            width: isSelected ? 1.0 : 0.8,
+            color: isSelected ? const Color(0xFF0A1628) : AppColors.border,
+            width: isSelected ? 1.2 : 0.8,
           ),
         ),
         child: Row(
@@ -213,9 +214,10 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
             ],
             Text(
               label,
-              style: AppTypography.caption.copyWith(
-                color: isSelected ? AppColors.primary : AppColors.textSecondary,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+              style: GoogleFonts.plusJakartaSans(
+                color: isSelected ? const Color(0xFF0A1628) : AppColors.textSecondary,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                fontSize: 11.5,
               ),
             ),
           ],
@@ -269,8 +271,9 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
     }
 
     final guestName = (room['guest_name'] ?? room['user_name'] ?? '').toString().trim();
+    // Fix duplicate category bug: When vacant, display operational status 'Ready' rather than repeating catAbbr
     final String subText = isVacant
-        ? catAbbr
+        ? 'Ready'
         : (guestName.isNotEmpty ? guestName.split(' ').first : statusLabel);
 
     return ClipRRect(
@@ -315,26 +318,29 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
                           Flexible(
                             child: Text(
                               roomNum,
-                              style: AppTypography.monoRoom.copyWith(
-                                fontSize: 12.5,
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 13,
                                 fontWeight: FontWeight.w700,
+                                color: AppColors.textPrimary,
+                                letterSpacing: -0.2,
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                             decoration: BoxDecoration(
                               color: AppColors.surfaceSubtle,
                               borderRadius: BorderRadius.circular(3),
                             ),
                             child: Text(
                               catAbbr,
-                              style: AppTypography.caption.copyWith(
-                                fontSize: 9,
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 9.5,
                                 fontWeight: FontWeight.w700,
-                                color: AppColors.textMuted,
+                                color: AppColors.textSecondary,
+                                letterSpacing: 0.2,
                               ),
                             ),
                           ),
@@ -345,23 +351,39 @@ class _LiveRoomMatrixState extends ConsumerState<LiveRoomMatrix> {
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           Flexible(
-                            child: Text(
-                              subText,
-                              style: AppTypography.caption.copyWith(
-                                fontSize: 10,
-                                fontWeight: isVacant ? FontWeight.w500 : FontWeight.w700,
-                                color: isVacant ? AppColors.textSecondary : statusColor,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 5,
+                                  height: 5,
+                                  decoration: BoxDecoration(
+                                    color: isVacant ? AppColors.success : statusColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    subText,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 10.5,
+                                      fontWeight: isVacant ? FontWeight.w600 : FontWeight.w700,
+                                      color: isVacant ? AppColors.success : statusColor,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                           SizedBox(
-                            width: 20,
-                            height: 20,
+                            width: 22,
+                            height: 22,
                             child: PopupMenuButton<String>(
-                              tooltip: 'Status',
-                              icon: const Icon(Icons.more_vert, size: 14, color: AppColors.textMuted),
+                              tooltip: 'Update Status',
+                              icon: const Icon(Icons.more_vert_rounded, size: 15, color: AppColors.textMuted),
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(maxWidth: 150),
                               onSelected: (newStatus) async {

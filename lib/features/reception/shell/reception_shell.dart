@@ -242,7 +242,7 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                                   'assets/images/concigo_logo_transparent.png',
                                   height: 32,
                                   width: 32,
-                                  color: AppColors.primary,
+                                  color: const Color(0xFF0A1628),
                                   fit: BoxFit.contain,
                                 ),
                               ),
@@ -259,10 +259,10 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                                       Flexible(
                                         child: Text(
                                           widget.propertyName.isNotEmpty ? widget.propertyName.toUpperCase() : 'CONCIGO LUXURY RESORT',
-                                          style: AppTypography.labelLarge.copyWith(
-                                            letterSpacing: 1.1,
+                                          style: GoogleFonts.plusJakartaSans(
+                                            letterSpacing: 1.3,
                                             fontWeight: FontWeight.w700,
-                                            color: AppColors.primary,
+                                            color: const Color(0xFF0A1628),
                                             fontSize: isMobile ? 12 : 13.5,
                                           ),
                                           overflow: TextOverflow.ellipsis,
@@ -508,25 +508,23 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                   color: Colors.transparent,
                   child: InkWell(
                     onTap: () => RoleSwitcherDialog.show(context),
-                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
+                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(8)),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3.5),
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
-                        ),
-                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
+                        color: AppColors.surface,
+                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(8)),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.22),
+                            color: Colors.black.withValues(alpha: 0.08),
                             blurRadius: 6,
-                            offset: const Offset(0, 3),
+                            offset: const Offset(0, 2),
                           ),
                         ],
                         border: Border(
-                          left: BorderSide(color: const Color(0xFF38BDF8).withValues(alpha: 0.4), width: 0.8),
-                          right: BorderSide(color: const Color(0xFF38BDF8).withValues(alpha: 0.4), width: 0.8),
-                          bottom: BorderSide(color: const Color(0xFF38BDF8).withValues(alpha: 0.4), width: 0.8),
+                          left: BorderSide(color: AppColors.border, width: 0.8),
+                          right: BorderSide(color: AppColors.border, width: 0.8),
+                          bottom: BorderSide(color: AppColors.border, width: 0.8),
                         ),
                       ),
                       child: Row(
@@ -534,24 +532,34 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                         children: [
                           const Icon(
                             Icons.keyboard_arrow_down_rounded,
-                            size: 15,
-                            color: Color(0xFF38BDF8),
+                            size: 14,
+                            color: Color(0xFF0A1628),
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            'WORKSTATION SHUTTER',
+                            'STATION SWITCHER',
                             style: GoogleFonts.plusJakartaSans(
-                              fontSize: 8.5,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.8,
-                              color: const Color(0xFFE2E8F0),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.6,
+                              color: const Color(0xFF0A1628),
                             ),
                           ),
                           const SizedBox(width: 4),
-                          const Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            size: 15,
-                            color: Color(0xFF38BDF8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFD4A017),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(
+                              '${authorizedRoles.length}',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 8.5,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -598,8 +606,8 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
-              color: isSelected ? AppColors.primary : Colors.transparent,
-              width: 2.2,
+              color: isSelected ? const Color(0xFFD4A017) : Colors.transparent, // Champagne Gold Active Accent
+              width: 2.5,
             ),
           ),
         ),
@@ -609,13 +617,13 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
             Icon(
               icon,
               size: 15,
-              color: isSelected ? AppColors.primary : AppColors.textSecondary,
+              color: isSelected ? const Color(0xFF0A1628) : AppColors.textSecondary,
             ),
             const SizedBox(width: 7),
             Text(
               title,
-              style: AppTypography.labelLarge.copyWith(
-                color: isSelected ? AppColors.primary : AppColors.textSecondary,
+              style: GoogleFonts.plusJakartaSans(
+                color: isSelected ? const Color(0xFF0A1628) : AppColors.textSecondary,
                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                 fontSize: 13,
                 letterSpacing: 0.2,
@@ -626,14 +634,14 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                 decoration: BoxDecoration(
-                  color: isSelected ? AppColors.primary : AppColors.attention,
+                  color: isSelected ? const Color(0xFF0A1628) : AppColors.attention,
                   borderRadius: AppSpacing.roundedSm,
                 ),
                 child: Text(
                   '$badgeCount',
-                  style: const TextStyle(
+                  style: GoogleFonts.plusJakartaSans(
                     color: Colors.white,
-                    fontSize: 10,
+                    fontSize: 9.5,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
