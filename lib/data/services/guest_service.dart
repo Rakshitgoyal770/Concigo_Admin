@@ -29,7 +29,7 @@ class GuestService {
       final stays = await _supabaseService.client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, stay_rooms(room_id, rooms(room_number))',
+            'stay_id, check_in_date, check_out_date, status, main_user_id, raw_metadata, stay_rooms(room_id, rooms(room_number))',
           )
           .eq('hotel_id', propId);
 
@@ -162,12 +162,18 @@ class GuestService {
           return null;
         }
 
+        final rawMeta = stay?['raw_metadata'] as Map<String, dynamic>?;
+        final primaryGuest = rawMeta?['primaryGuest'] as Map<String, dynamic>?;
+        final bookingName = (primaryGuest?['name'] ?? 
+            (primaryGuest?['firstName'] != null ? '${primaryGuest!['firstName']} ${primaryGuest['lastName'] ?? ''}'.trim() : null))?.toString();
+        final bookingPhone = primaryGuest?['phone']?.toString();
+
         return {
           ...req,
           'request_id': req['id'],
           'guest_name': guestName,
-          'account_user_name': user?['name'] ?? 'Guest',
-          'phone_number': user?['mobile_no'] ?? '',
+          'account_user_name': (bookingName != null && bookingName.isNotEmpty) ? bookingName : (user?['name'] ?? 'Guest'),
+          'phone_number': (bookingPhone != null && bookingPhone.isNotEmpty) ? bookingPhone : (user?['mobile_no'] ?? ''),
           'room_number': roomNum ?? 'Unassigned',
           'room_id': roomId,
           'is_precheckin': false,
