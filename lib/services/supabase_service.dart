@@ -583,6 +583,35 @@ class SupabaseService {
     }
   }
 
+  /// Fetch authoritative reception feed from v_reception_feed view
+  Future<List<Map<String, dynamic>>> fetchReceptionFeed(String propertyId) async {
+    try {
+      final response = await client
+          .from('v_reception_feed')
+          .select('*')
+          .eq('hotel_id', propertyId)
+          .order('check_in_date', ascending: true);
+
+      return List<Map<String, dynamic>>.from(response);
+    } on PostgrestException catch (e) {
+      throw Exception('Failed to fetch reception feed: ${e.message}');
+    }
+  }
+
+  /// Fetch stay folio breakdown from get_stay_folio RPC
+  Future<Map<String, dynamic>?> fetchStayFolio(String stayId) async {
+    try {
+      final response = await client.rpc('get_stay_folio', params: {
+        'p_stay_id': stayId,
+      });
+      if (response == null) return null;
+      return Map<String, dynamic>.from(response as Map);
+    } catch (e) {
+      debugPrint('[SupabaseService] Error calling get_stay_folio: $e');
+      return null;
+    }
+  }
+
   /// Fetch all stays for a property with full guest and room info (SuperAdmin)
   Future<List<Map<String, dynamic>>> fetchAllStaysForSuperAdmin(
     String propertyId,

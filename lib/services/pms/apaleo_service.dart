@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../supabase_service.dart';
 
 /// Production-grade Apaleo PMS Integration Service.
 /// Handles OAuth 2.0 token management (automatic refresh), property synchronization,
@@ -43,6 +44,8 @@ class ApaleoService {
   String? _refreshToken;
   DateTime? _expiresAt;
 
+  DateTime? get expiresAt => _expiresAt;
+
   /// True only when we have a non-null access token that is not yet expired.
   bool get isConnected {
     if (_accessToken == null || _accessToken!.isEmpty) return false;
@@ -77,7 +80,13 @@ class ApaleoService {
       await _loadFromSupabase();
     }
 
-    // 3. Parse expiry from JWT if not already set
+    // 3. If token is still expired or missing, auto-refresh via getValidAccessToken()
+    if ((_accessToken == null || _accessToken!.isEmpty) ||
+        (_expiresAt != null && DateTime.now().isAfter(_expiresAt!))) {
+      await getValidAccessToken(forceRefresh: true);
+    }
+
+    // 4. Parse expiry from JWT if not already set
     if (_accessToken != null && _accessToken!.isNotEmpty) {
       _expiresAt ??= _extractJwtExpiry(_accessToken!);
     }
@@ -119,9 +128,13 @@ class ApaleoService {
     try {
       final resp = await http.post(
         Uri.parse(_proxyUrl),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SupabaseService.supabaseAnonKey,
+          'Authorization': 'Bearer ${SupabaseService.supabaseAnonKey}',
+        },
         body: jsonEncode({'action': 'get_token'}),
-      ).timeout(const Duration(seconds: 3));
+      ).timeout(const Duration(seconds: 10));
 
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -203,10 +216,17 @@ class ApaleoService {
       if (kIsWeb) {
         resp = await http.post(
           Uri.parse(_proxyUrl),
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SupabaseService.supabaseAnonKey,
+            'Authorization': 'Bearer ${SupabaseService.supabaseAnonKey}',
+          },
           body: jsonEncode({
             'action': 'refresh',
             'refresh_token': refreshToken,
+            'client_id': _clientId,
+            'client_secret': _clientSecret,
+            'hotel_id': 'ZIKG',
           }),
         ).timeout(const Duration(seconds: 15));
       } else {
@@ -333,10 +353,17 @@ class ApaleoService {
       if (kIsWeb) {
         resp = await http.post(
           Uri.parse(_proxyUrl),
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SupabaseService.supabaseAnonKey,
+            'Authorization': 'Bearer ${SupabaseService.supabaseAnonKey}',
+          },
           body: jsonEncode({
             'action': 'exchange',
             'code': code,
+            'client_id': _clientId,
+            'client_secret': _clientSecret,
+            'hotel_id': 'ZIKG',
           }),
         );
       } else {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
@@ -55,7 +56,7 @@ class BillingDepartureView extends ConsumerWidget {
                             color: AppColors.primaryLight,
                             borderRadius: AppSpacing.roundedMd,
                           ),
-                          child: const Icon(Icons.hotel_class_rounded, size: 18, color: AppColors.primary),
+                          child: const Icon(LucideIcons.users, size: 18, color: AppColors.primary),
                         ),
                         AppSpacing.gapH12,
                         Expanded(
@@ -80,7 +81,7 @@ class BillingDepartureView extends ConsumerWidget {
                             child: Center(
                               child: Column(
                                 children: [
-                                  const Icon(Icons.king_bed_outlined, size: 40, color: AppColors.textMuted),
+                                  const Icon(LucideIcons.bedDouble, size: 40, color: AppColors.textMuted),
                                   AppSpacing.gapV8,
                                   Text('No active in-house stays found', style: AppTypography.bodySmall),
                                 ],
@@ -135,7 +136,7 @@ class BillingDepartureView extends ConsumerWidget {
                                         text: 'Folio & Charges',
                                         variant: LuxuryButtonVariant.outline,
                                         height: 34,
-                                        icon: Icons.receipt_long_outlined,
+                                        icon: LucideIcons.receiptText,
                                         onPressed: () {
                                           showDialog(
                                             context: context,
@@ -147,7 +148,7 @@ class BillingDepartureView extends ConsumerWidget {
                                         text: 'Checkout',
                                         variant: LuxuryButtonVariant.danger,
                                         height: 34,
-                                        icon: Icons.logout_rounded,
+                                        icon: LucideIcons.doorClosed,
                                         onPressed: () {
                                           showDialog(
                                             context: context,
@@ -206,7 +207,7 @@ class BillingDepartureView extends ConsumerWidget {
                                       text: 'Folio & Charges',
                                       variant: LuxuryButtonVariant.outline,
                                       height: 32,
-                                      icon: Icons.receipt_long_outlined,
+                                      icon: LucideIcons.receiptText,
                                       onPressed: () {
                                         showDialog(
                                           context: context,
@@ -219,7 +220,7 @@ class BillingDepartureView extends ConsumerWidget {
                                       text: 'Checkout',
                                       variant: LuxuryButtonVariant.danger,
                                       height: 32,
-                                      icon: Icons.logout_rounded,
+                                      icon: LucideIcons.doorClosed,
                                       onPressed: () {
                                         showDialog(
                                           context: context,

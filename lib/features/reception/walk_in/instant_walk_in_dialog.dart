@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
@@ -218,7 +219,7 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
                           color: AppColors.infoLight,
                           borderRadius: AppSpacing.roundedMd,
                         ),
-                        child: const Icon(Icons.flash_on_rounded, color: AppColors.info, size: 20),
+                        child: const Icon(LucideIcons.userPlus, color: AppColors.info, size: 20),
                       ),
                       AppSpacing.gapH12,
                       Expanded(
@@ -745,7 +746,7 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
                       LuxuryButton(
                         text: 'Activate Stay (30s)',
                         variant: LuxuryButtonVariant.primary,
-                        icon: Icons.check_circle_outline,
+                        icon: LucideIcons.doorOpen,
                         height: 38,
                         isLoading: _isSubmitting,
                         onPressed: _processWalkIn,

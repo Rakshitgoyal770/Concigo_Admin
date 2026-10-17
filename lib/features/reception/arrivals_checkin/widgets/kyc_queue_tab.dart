@@ -35,8 +35,25 @@ class _KycQueueTabState extends ConsumerState<KycQueueTab> {
 
   void _subscribeToRealtime() {
     try {
+      final propId = SupabaseService.instance.currentSession?.propertyId;
       _realtimeChannel = SupabaseService.instance.client
           .channel('kyc_queue_live_heartbeat_${DateTime.now().millisecondsSinceEpoch}')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'stay',
+            filter: (propId != null && propId.isNotEmpty)
+                ? PostgresChangeFilter(
+                    type: PostgresChangeFilterType.eq,
+                    column: 'hotel_id',
+                    value: propId,
+                  )
+                : null,
+            callback: (payload) {
+              debugPrint('⚡ [KYC Queue Heartbeat] Realtime stay change for hotel $propId: ${payload.eventType}');
+              _pulseHeartbeat(silent: true);
+            },
+          )
           .onPostgresChanges(
             event: PostgresChangeEvent.all,
             schema: 'public',

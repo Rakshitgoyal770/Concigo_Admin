@@ -634,8 +634,12 @@ class _ApaleoStatusChipState extends State<ApaleoStatusChip> {
     ApaleoService.connectionNotifier.addListener(_onChanged);
     ApaleoService.tokenExpiredNotifier.addListener(_onChanged);
     PmsSyncService.lastSyncNotifier.addListener(_onChanged);
-    // Refresh displayed time every 30 seconds
-    _ticker = Timer.periodic(const Duration(seconds: 30), (_) {
+    // Refresh displayed time every 30 seconds and proactively keep token fresh
+    _ticker = Timer.periodic(const Duration(seconds: 30), (_) async {
+      final exp = ApaleoService.instance.expiresAt;
+      if (exp != null && DateTime.now().isAfter(exp.subtract(const Duration(minutes: 5)))) {
+        await ApaleoService.instance.getValidAccessToken();
+      }
       if (mounted) setState(() {});
     });
   }

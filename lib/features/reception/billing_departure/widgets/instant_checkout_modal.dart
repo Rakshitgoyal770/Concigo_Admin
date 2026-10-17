@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
@@ -297,7 +298,7 @@ class _InstantCheckoutModalState extends ConsumerState<InstantCheckoutModal> {
                       color: AppColors.departureLight,
                       borderRadius: AppSpacing.roundedMd,
                     ),
-                    child: const Icon(Icons.logout_rounded, color: AppColors.departure, size: 22),
+                    child: const Icon(LucideIcons.doorClosed, color: AppColors.departure, size: 22),
                   ),
                   AppSpacing.gapH12,
                   Expanded(
@@ -371,7 +372,7 @@ class _InstantCheckoutModalState extends ConsumerState<InstantCheckoutModal> {
                       LuxuryButton(
                         text: isNarrow ? 'Checkout' : 'Confirm Checkout & Release',
                         variant: LuxuryButtonVariant.danger,
-                        icon: Icons.check,
+                        icon: LucideIcons.doorClosed,
                         height: 38,
                         isLoading: _isProcessing,
                         onPressed: _processCheckout,

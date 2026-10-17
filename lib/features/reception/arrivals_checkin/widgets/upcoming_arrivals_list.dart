@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
@@ -49,19 +50,29 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
 
   void _subscribeToRealtime() {
     try {
+      final propId = SupabaseService.instance.currentSession?.propertyId;
       _realtimeChannel = SupabaseService.instance.client
           .channel('upcoming_arrivals_heartbeat_${DateTime.now().millisecondsSinceEpoch}')
           .onPostgresChanges(
             event: PostgresChangeEvent.all,
             schema: 'public',
             table: 'stay',
-            filter: PostgresChangeFilter(
-              type: PostgresChangeFilterType.eq,
-              column: 'status',
-              value: 'Upcoming',
-            ),
+            filter: (propId != null && propId.isNotEmpty)
+                ? PostgresChangeFilter(
+                    type: PostgresChangeFilterType.eq,
+                    column: 'hotel_id',
+                    value: propId,
+                  )
+                : PostgresChangeFilter(
+                    type: PostgresChangeFilterType.eq,
+                    column: 'status',
+                    value: 'Upcoming',
+                  ),
             callback: (payload) {
-              debugPrint('⚡ [Upcoming Arrivals Heartbeat] Realtime stay event: ${payload.eventType}');
+              final newStatus = payload.newRecord['status']?.toString();
+              final oldStatus = payload.oldRecord['status']?.toString();
+              if (newStatus != 'Upcoming' && oldStatus != 'Upcoming') return;
+              debugPrint('⚡ [Upcoming Arrivals Heartbeat] Realtime stay event for hotel $propId: ${payload.eventType}');
               _pulseHeartbeat(silent: true);
             },
           )
@@ -244,7 +255,7 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                       color: AppColors.infoLight,
                       borderRadius: AppSpacing.roundedMd,
                     ),
-                    child: const Icon(Icons.flight_land_rounded, size: 18, color: AppColors.info),
+                    child: const Icon(LucideIcons.calendarCheck, size: 18, color: AppColors.info),
                   ),
                   AppSpacing.gapH12,
                   Expanded(
@@ -268,7 +279,7 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                     LuxuryButton(
                       text: '+ New Booking',
                       variant: LuxuryButtonVariant.outline,
-                      icon: Icons.add_circle_outline_rounded,
+                      icon: LucideIcons.calendarPlus,
                       onPressed: () {
                         showDialog(
                           context: context,
@@ -296,7 +307,7 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                     LuxuryButton(
                       text: '+ New Booking',
                       variant: LuxuryButtonVariant.outline,
-                      icon: Icons.add_circle_outline_rounded,
+                      icon: LucideIcons.calendarPlus,
                       onPressed: () {
                         showDialog(
                           context: context,
@@ -648,6 +659,7 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                                         LuxuryButton(
                                           text: 'Activate Check-In',
                                           variant: LuxuryButtonVariant.primary,
+                                          icon: LucideIcons.doorOpen,
                                           isExpanded: true,
                                           height: 34,
                                           onPressed: () {
@@ -713,6 +725,7 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                                       LuxuryButton(
                                         text: 'Activate Check-In',
                                         variant: LuxuryButtonVariant.primary,
+                                        icon: LucideIcons.doorOpen,
                                         height: 34,
                                         onPressed: () {
                                           showDialog(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
@@ -48,18 +49,21 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.propertyId.isNotEmpty) {
         ref.read(activePropertyIdProvider.notifier).state = widget.propertyId;
-        // Start reconciliation sync loop — every 5 min as safety net.
-        // Webhooks (apaleo-webhook Edge Function) handle real-time accuracy.
-        // Delta watermark means this cycle costs 0 DB writes when nothing changed.
-        PmsSyncService.instance.startPeriodicSync(
-          propertyId: widget.propertyId,
-          interval: const Duration(minutes: 5),
-          onComplete: () {
-            if (mounted) {
-              ref.read(receptionRefreshSignalProvider.notifier).state++;
-            }
-          },
-        );
+        // Client-side PMS sync loop is disabled in dev to enforce single server-side ingestion
+        const bool kEnableClientPmsSync = false;
+        if (kEnableClientPmsSync) {
+          PmsSyncService.instance.startPeriodicSync(
+            propertyId: widget.propertyId,
+            interval: const Duration(minutes: 5),
+            onComplete: () {
+              if (mounted) {
+                ref.read(receptionRefreshSignalProvider.notifier).state++;
+              }
+            },
+          );
+        } else {
+          debugPrint('[ReceptionShell] Client-side PmsSyncService is DISABLED (kEnableClientPmsSync=false). Server engine handles all ingestion.');
+        }
       }
     });
   }
@@ -242,7 +246,7 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                                   'assets/images/concigo_logo_transparent.png',
                                   height: 32,
                                   width: 32,
-                                  color: const Color(0xFF0A1628),
+                                  color: AppColors.primary,
                                   fit: BoxFit.contain,
                                 ),
                               ),
@@ -262,7 +266,7 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                                           style: GoogleFonts.plusJakartaSans(
                                             letterSpacing: 1.3,
                                             fontWeight: FontWeight.w700,
-                                            color: const Color(0xFF0A1628),
+                                            color: AppColors.primary,
                                             fontSize: isMobile ? 12 : 13.5,
                                           ),
                                           overflow: TextOverflow.ellipsis,
@@ -320,7 +324,7 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                           // Sync / Refresh Trigger
                           IconButton(
                             tooltip: 'Synchronize Live Data & PMS Now',
-                            icon: const Icon(Icons.sync_rounded, size: 19, color: AppColors.textSecondary),
+                            icon: const Icon(LucideIcons.refreshCw, size: 17, color: AppColors.textSecondary),
                             onPressed: () async {
                               if (widget.propertyId.isNotEmpty) {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -420,7 +424,7 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                           // Logout Trigger
                           IconButton(
                             tooltip: 'Logout Front Desk',
-                            icon: const Icon(Icons.logout_rounded, size: 18, color: AppColors.departure),
+                            icon: const Icon(LucideIcons.logOut, size: 18, color: AppColors.departure),
                             onPressed: () => _showLogoutDialog(context),
                           ),
                         ],
@@ -443,10 +447,10 @@ class _ReceptionShellState extends ConsumerState<ReceptionShell> {
                   padding: EdgeInsets.symmetric(horizontal: isMobile ? AppSpacing.md : AppSpacing.xxl),
                   child: Row(
                     children: [
-                      _buildHubTab(0, 'Front Desk', Icons.dashboard_outlined, badgeCount: null),
-                      _buildHubTab(1, 'Arrivals & Check-In', Icons.flight_land_rounded, badgeCount: kpis.pendingKYC > 0 ? kpis.pendingKYC : null),
-                      _buildHubTab(2, 'Upsells & Offers', Icons.local_offer_outlined, badgeCount: null),
-                      _buildHubTab(3, 'Billing & Departure', Icons.receipt_long_outlined, badgeCount: kpis.dueDepartures > 0 ? kpis.dueDepartures : null),
+                      _buildHubTab(0, 'Front Desk', LucideIcons.layoutDashboard, badgeCount: null),
+                      _buildHubTab(1, 'Arrivals & Check-In', LucideIcons.calendarCheck, badgeCount: kpis.pendingKYC > 0 ? kpis.pendingKYC : null),
+                      _buildHubTab(2, 'Upsells & Offers', LucideIcons.sparkles, badgeCount: null),
+                      _buildHubTab(3, 'Billing & Departure', LucideIcons.doorClosed, badgeCount: kpis.dueDepartures > 0 ? kpis.dueDepartures : null),
                     ],
                   ),
                 ),

@@ -37,6 +37,8 @@ pubspec.lock
 # Environment & Secrets
 env.json
 *.env
+scratch/
+scratch/*
 
 # Symbolication related
 app.*.symbols

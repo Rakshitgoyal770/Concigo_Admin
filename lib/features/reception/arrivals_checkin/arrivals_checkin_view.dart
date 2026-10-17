@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
@@ -69,7 +70,7 @@ class _ArrivalsCheckinViewState extends ConsumerState<ArrivalsCheckinView> with 
                           child: LuxuryButton(
                             text: '+ New Booking',
                             variant: LuxuryButtonVariant.secondary,
-                            icon: Icons.calendar_today_rounded,
+                            icon: LucideIcons.calendarPlus,
                             onPressed: () {
                               showDialog(
                                 context: context,
@@ -83,7 +84,7 @@ class _ArrivalsCheckinViewState extends ConsumerState<ArrivalsCheckinView> with 
                           child: LuxuryButton(
                             text: '+ Walk-In',
                             variant: LuxuryButtonVariant.primary,
-                            icon: Icons.flash_on_rounded,
+                            icon: LucideIcons.userPlus,
                             onPressed: () {
                               showDialog(
                                 context: context,
@@ -115,7 +116,7 @@ class _ArrivalsCheckinViewState extends ConsumerState<ArrivalsCheckinView> with 
                         LuxuryButton(
                           text: '+ Create Upcoming Reservation',
                           variant: LuxuryButtonVariant.secondary,
-                          icon: Icons.calendar_month_rounded,
+                          icon: LucideIcons.calendarPlus,
                           onPressed: () {
                             showDialog(
                               context: context,
@@ -127,7 +128,7 @@ class _ArrivalsCheckinViewState extends ConsumerState<ArrivalsCheckinView> with 
                         LuxuryButton(
                           text: '+ Instant Desk Walk-In',
                           variant: LuxuryButtonVariant.primary,
-                          icon: Icons.flash_on_rounded,
+                          icon: LucideIcons.userPlus,
                           onPressed: () {
                             showDialog(
                               context: context,
@@ -162,7 +163,7 @@ class _ArrivalsCheckinViewState extends ConsumerState<ArrivalsCheckinView> with 
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.flight_land_rounded, size: 16),
+                          const Icon(LucideIcons.calendarCheck, size: 16),
                           AppSpacing.gapH8,
                           const Text('Upcoming Arrivals & Bookings'),
                           if (upcomingCount > 0) ...[
@@ -186,7 +187,7 @@ class _ArrivalsCheckinViewState extends ConsumerState<ArrivalsCheckinView> with 
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.badge_outlined, size: 16),
+                          const Icon(LucideIcons.shieldCheck, size: 16),
                           AppSpacing.gapH8,
                           const Text('Pre-Check-In & KYC Queue'),
                           if (pendingKycCount > 0) ...[

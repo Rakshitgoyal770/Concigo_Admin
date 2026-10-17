@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_spacing.dart';
 import '../../../../data/providers/reception_providers.dart';
@@ -40,26 +41,26 @@ class FrontDeskKpisSection extends ConsumerWidget {
 
           final items = [
             _buildTickerItem(
-              icon: Icons.hotel_rounded,
+              icon: LucideIcons.bedDouble,
               iconColor: AppColors.primary,
               count: '${kpis.vacantRooms}',
               label: isWide ? 'Available Rooms' : 'Avail',
             ),
             _buildTickerItem(
-              icon: Icons.flight_land_rounded,
+              icon: LucideIcons.calendarCheck,
               iconColor: AppColors.success,
               count: kpis.expectedArrivals < 10 ? '0${kpis.expectedArrivals}' : '${kpis.expectedArrivals}',
               label: isWide ? 'Today Arrivals' : 'Arr',
               onTap: onArrivalsTap,
             ),
             _buildTickerItem(
-              icon: Icons.people_outline_rounded,
+              icon: LucideIcons.users,
               iconColor: AppColors.primary,
               count: kpis.occupiedRooms < 10 ? '0${kpis.occupiedRooms}' : '${kpis.occupiedRooms}',
               label: isWide ? 'In-House Guests' : 'In-House',
             ),
             _buildTickerItem(
-              icon: Icons.flight_takeoff_rounded,
+              icon: LucideIcons.doorClosed,
               iconColor: AppColors.textSecondary,
               count: kpis.dueDepartures < 10 ? '0${kpis.dueDepartures}' : '${kpis.dueDepartures}',
               label: isWide ? 'Due Departures' : 'Dep',
@@ -67,7 +68,7 @@ class FrontDeskKpisSection extends ConsumerWidget {
             ),
             // Dedicated KYC Approval Requests
             _buildTickerItem(
-              icon: Icons.verified_user_rounded,
+              icon: LucideIcons.shieldCheck,
               iconColor: kpis.pendingKYC > 0 ? AppColors.attention : AppColors.textMuted,
               count: kpis.pendingKYC < 10 ? '0${kpis.pendingKYC}' : '${kpis.pendingKYC}',
               label: isWide ? 'KYC Approval' : 'KYC',
@@ -77,7 +78,7 @@ class FrontDeskKpisSection extends ConsumerWidget {
             ),
             // Dedicated Bellboy / Luggage Dispatch Requests
             _buildTickerItem(
-              icon: Icons.luggage_rounded,
+              icon: LucideIcons.luggage,
               iconColor: kpis.pendingLuggage > 0 ? const Color(0xFF6366F1) : AppColors.textMuted,
               count: kpis.pendingLuggage < 10 ? '0${kpis.pendingLuggage}' : '${kpis.pendingLuggage}',
               label: isWide ? 'Bellboy Queue' : 'Luggage',

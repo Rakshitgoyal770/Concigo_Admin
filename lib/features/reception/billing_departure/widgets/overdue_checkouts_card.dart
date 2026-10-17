@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
@@ -98,7 +99,7 @@ class OverdueCheckoutsCard extends ConsumerWidget {
           shape: const RoundedRectangleBorder(borderRadius: AppSpacing.roundedLg),
           title: Row(
             children: [
-              const Icon(Icons.more_time_rounded, color: AppColors.primary),
+              const Icon(LucideIcons.clockPlus, color: AppColors.primary),
               AppSpacing.gapH8,
               Text('Extend Stay / Late Checkout', style: AppTypography.titleSmall),
             ],
@@ -242,7 +243,7 @@ class OverdueCheckoutsCard extends ConsumerWidget {
                       borderRadius: AppSpacing.roundedMd,
                     ),
                     child: const Icon(
-                      Icons.alarm_on_rounded,
+                      LucideIcons.clockAlert,
                       size: 20,
                       color: Color(0xFFD97706),
                     ),
@@ -366,14 +367,14 @@ class OverdueCheckoutsCard extends ConsumerWidget {
                             text: 'Extend',
                             variant: LuxuryButtonVariant.outline,
                             height: 32,
-                            icon: Icons.more_time_rounded,
+                            icon: LucideIcons.clockPlus,
                             onPressed: () => _showExtendDialog(context, ref, stay),
                           ),
                           LuxuryButton(
                             text: 'Checkout',
                             variant: LuxuryButtonVariant.danger,
                             height: 32,
-                            icon: Icons.logout_rounded,
+                            icon: LucideIcons.doorClosed,
                             onPressed: () {
                               showDialog(
                                 context: context,

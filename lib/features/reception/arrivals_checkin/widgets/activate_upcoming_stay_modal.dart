@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
@@ -8,7 +9,7 @@ import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../core/widgets/luxury_text_field.dart';
 import '../../../../data/providers/supabase_providers.dart';
 import '../../../../data/providers/reception_providers.dart';
-import '../../../../services/pms/apaleo_service.dart';
+import '../../../../services/pms/pms_factory.dart';
 
 class ActivateUpcomingStayModal extends ConsumerStatefulWidget {
   final Map<String, dynamic> stay;
@@ -222,33 +223,37 @@ class _ActivateUpcomingStayModalState extends ConsumerState<ActivateUpcomingStay
         }
 
         if (pmsResId != null && pmsResId.isNotEmpty) {
-          // 1. Assign room in Apaleo first
-          if (_selectedRoomIds.isNotEmpty) {
+          final propId = supabaseService.currentSession?.propertyId ?? '';
+          if (propId.isNotEmpty) {
             try {
-              final roomRow = await supabaseService.client
-                  .from('rooms')
-                  .select('room_number')
-                  .eq('room_id', _selectedRoomIds.first)
-                  .maybeSingle();
-              final roomNum = roomRow?['room_number']?.toString();
-              if (roomNum != null && roomNum.isNotEmpty) {
-                debugPrint('[ActivateModal] Syncing room assignment to Apaleo for $pmsResId -> Room $roomNum...');
-                await ApaleoService.instance.assignUnitReservation(
-                  reservationId: pmsResId,
-                  roomNumber: roomNum,
-                );
+              final pmsContext = await PmsFactory.getContextForHotel(
+                client: supabaseService.client,
+                propertyId: propId,
+              );
+              String? roomNum;
+              if (_selectedRoomIds.isNotEmpty) {
+                try {
+                  final roomRow = await supabaseService.client
+                      .from('rooms')
+                      .select('room_number')
+                      .eq('room_id', _selectedRoomIds.first)
+                      .maybeSingle();
+                  roomNum = roomRow?['room_number']?.toString();
+                } catch (_) {}
               }
-            } catch (assignErr) {
-              debugPrint('[ActivateModal] Apaleo assign unit error: $assignErr');
+
+              debugPrint('[ActivateModal] Syncing check-in to ${pmsContext.adapter.provider} for $pmsResId (Room: $roomNum)...');
+              await pmsContext.adapter.checkInReservation(
+                pmsReservationId: pmsResId,
+                assignedRoomNumber: roomNum,
+              );
+            } catch (innerErr) {
+              debugPrint('[ActivateModal] Inner PMS check-in sync error: $innerErr');
             }
           }
-
-          // 2. Check-in reservation in Apaleo
-          debugPrint('[ActivateModal] Syncing check-in to Apaleo for $pmsResId...');
-          await ApaleoService.instance.checkInReservation(pmsResId);
         }
       } catch (pmsErr) {
-        debugPrint('[ActivateModal] Apaleo PMS check-in sync error: $pmsErr');
+        debugPrint('[ActivateModal] PMS check-in sync error: $pmsErr');
       }
 
 
@@ -324,7 +329,7 @@ class _ActivateUpcomingStayModalState extends ConsumerState<ActivateUpcomingStay
                           color: AppColors.primaryLight,
                           borderRadius: AppSpacing.roundedMd,
                         ),
-                        child: const Icon(Icons.flight_land_rounded, color: AppColors.primary, size: 20),
+                        child: const Icon(LucideIcons.doorOpen, color: AppColors.primary, size: 20),
                       ),
                       AppSpacing.gapH12,
                       Expanded(
@@ -813,7 +818,7 @@ class _ActivateUpcomingStayModalState extends ConsumerState<ActivateUpcomingStay
                       LuxuryButton(
                         text: 'Complete Check-In',
                         variant: LuxuryButtonVariant.primary,
-                        icon: Icons.check_circle_outline,
+                        icon: LucideIcons.doorOpen,
                         height: 38,
                         isLoading: _isProcessing,
                         onPressed: _handleActivation,

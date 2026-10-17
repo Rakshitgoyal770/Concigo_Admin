@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_typography.dart';
 import '../../../../core/constants/app_spacing.dart';
@@ -59,7 +60,7 @@ class _UpsellsOffersViewState extends ConsumerState<UpsellsOffersView> with Sing
                           child: LuxuryButton(
                             text: '+ Early In',
                             variant: LuxuryButtonVariant.secondary,
-                            icon: Icons.login_rounded,
+                            icon: LucideIcons.doorOpen,
                             onPressed: () {
                               showDialog(context: context, builder: (_) => const CreateEarlyCheckinDialog());
                             },
@@ -70,7 +71,7 @@ class _UpsellsOffersViewState extends ConsumerState<UpsellsOffersView> with Sing
                           child: LuxuryButton(
                             text: '+ Late Out',
                             variant: LuxuryButtonVariant.secondary,
-                            icon: Icons.logout_rounded,
+                            icon: LucideIcons.doorClosed,
                             onPressed: () {
                               showDialog(context: context, builder: (_) => const CreateLateCheckoutDialog());
                             },
@@ -99,7 +100,7 @@ class _UpsellsOffersViewState extends ConsumerState<UpsellsOffersView> with Sing
                         LuxuryButton(
                           text: '+ Early Check-In',
                           variant: LuxuryButtonVariant.secondary,
-                          icon: Icons.login_rounded,
+                          icon: LucideIcons.doorOpen,
                           onPressed: () {
                             showDialog(context: context, builder: (_) => const CreateEarlyCheckinDialog());
                           },
@@ -108,7 +109,7 @@ class _UpsellsOffersViewState extends ConsumerState<UpsellsOffersView> with Sing
                         LuxuryButton(
                           text: '+ Late Check-Out',
                           variant: LuxuryButtonVariant.secondary,
-                          icon: Icons.logout_rounded,
+                          icon: LucideIcons.doorClosed,
                           onPressed: () {
                             showDialog(context: context, builder: (_) => const CreateLateCheckoutDialog());
                           },
@@ -117,7 +118,7 @@ class _UpsellsOffersViewState extends ConsumerState<UpsellsOffersView> with Sing
                         LuxuryButton(
                           text: '+ New Package',
                           variant: LuxuryButtonVariant.primary,
-                          icon: Icons.add,
+                          icon: LucideIcons.plus,
                           onPressed: () {
                             showDialog(context: context, builder: (_) => const CreateOfferDialog());
                           },
