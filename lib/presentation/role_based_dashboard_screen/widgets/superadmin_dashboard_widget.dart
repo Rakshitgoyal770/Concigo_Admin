@@ -2746,8 +2746,8 @@ class _SuperAdminDashboardWidgetState extends State<SuperAdminDashboardWidget>
     final checkIn = stay['check_in_date'] as String? ?? '';
     final checkOut = stay['check_out_date'] as String? ?? '';
     final mainUser = stay['users'] as Map<String, dynamic>?;
-    final guestName = mainUser?['name'] as String? ?? 'Unknown Guest';
-    final guestMobile = mainUser?['mobile_no'] as String? ?? '';
+    final guestName = stay['guest_name'] as String? ?? mainUser?['name'] as String? ?? 'Unknown Guest';
+    final guestMobile = stay['mobile_no'] as String? ?? mainUser?['mobile_no'] as String? ?? '';
 
     // Rooms
     final stayRooms = stay['stay_rooms'] as List? ?? [];

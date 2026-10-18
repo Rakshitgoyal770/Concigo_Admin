@@ -594,7 +594,16 @@ class SupabaseService {
           .isFilter('deleted_at', null)
           .order('check_in_date', ascending: false);
 
-      return List<Map<String, dynamic>>.from(response);
+      return (response as List).map((row) {
+        final map = Map<String, dynamic>.from(row as Map);
+        final userMap = map['users'] as Map<String, dynamic>?;
+        final rawMeta = map['raw_metadata'] as Map<String, dynamic>?;
+        final bookingName = resolveBookingGuestName(rawMeta);
+        final bookingPhone = (rawMeta?['primaryGuest'] as Map<String, dynamic>?)?['phone'] as String?;
+        map['guest_name'] = bookingName ?? userMap?['name'] as String? ?? '—';
+        map['mobile_no'] = (bookingPhone != null && bookingPhone.isNotEmpty) ? bookingPhone : (userMap?['mobile_no'] as String? ?? '—');
+        return map;
+      }).toList();
     } on PostgrestException catch (e) {
       throw Exception('Failed to fetch all stays: ${e.message}');
     }
@@ -637,7 +646,7 @@ class SupabaseService {
       final response = await client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, created_at, '
+            'stay_id, check_in_date, check_out_date, status, main_user_id, created_at, raw_metadata, '
             'users(name, mobile_no), '
             'stay_rooms(room_id, rooms(room_number, type, floor)), '
             'stay_guests(user_id, users(name, mobile_no))',
@@ -646,7 +655,16 @@ class SupabaseService {
           .isFilter('deleted_at', null)
           .order('check_in_date', ascending: false);
 
-      return List<Map<String, dynamic>>.from(response);
+      return (response as List).map((row) {
+        final map = Map<String, dynamic>.from(row as Map);
+        final userMap = map['users'] as Map<String, dynamic>?;
+        final rawMeta = map['raw_metadata'] as Map<String, dynamic>?;
+        final bookingName = resolveBookingGuestName(rawMeta);
+        final bookingPhone = (rawMeta?['primaryGuest'] as Map<String, dynamic>?)?['phone'] as String?;
+        map['guest_name'] = bookingName ?? userMap?['name'] as String? ?? '—';
+        map['mobile_no'] = (bookingPhone != null && bookingPhone.isNotEmpty) ? bookingPhone : (userMap?['mobile_no'] as String? ?? '—');
+        return map;
+      }).toList();
     } on PostgrestException catch (e) {
       throw Exception('Failed to fetch stays: ${e.message}');
     }
@@ -824,14 +842,23 @@ class SupabaseService {
       final response = await client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, '
+            'stay_id, check_in_date, check_out_date, status, main_user_id, raw_metadata, '
             'users(name, first_name, last_name, mobile_no)',
           )
           .eq('hotel_id', propertyId)
           .eq('status', 'Upcoming')
           .isFilter('deleted_at', null)
           .order('check_in_date', ascending: true);
-      return List<Map<String, dynamic>>.from(response);
+      return (response as List).map((row) {
+        final map = Map<String, dynamic>.from(row as Map);
+        final userMap = map['users'] as Map<String, dynamic>?;
+        final rawMeta = map['raw_metadata'] as Map<String, dynamic>?;
+        final bookingName = resolveBookingGuestName(rawMeta);
+        final bookingPhone = (rawMeta?['primaryGuest'] as Map<String, dynamic>?)?['phone'] as String?;
+        map['guest_name'] = bookingName ?? userMap?['name'] as String? ?? '—';
+        map['mobile_no'] = (bookingPhone != null && bookingPhone.isNotEmpty) ? bookingPhone : (userMap?['mobile_no'] as String? ?? '—');
+        return map;
+      }).toList();
     } on PostgrestException catch (e) {
       throw Exception('Failed to fetch upcoming stays: ${e.message}');
     }
@@ -2479,7 +2506,7 @@ class SupabaseService {
           .from('room_upgrade_orders')
           .select(
             'order_id, user_id, stay_id, upg_offer_id, amount_paid, currency, payment_status, razorpay_payment_id, created_at, '
-            'users(user_id, name, mobile_no), '
+            'users(user_id, name, mobile_no), stay(raw_metadata), '
             'room_upgrade_offers(offer_id, room_type, original_price, discounted_price)',
           )
           .eq('property_id', propertyId)
@@ -2488,7 +2515,16 @@ class SupabaseService {
           .isFilter('deleted_at', null)
           .order('created_at', ascending: false);
 
-      return List<Map<String, dynamic>>.from(response);
+      return (response as List).map((r) {
+        final map = Map<String, dynamic>.from(r as Map);
+        final user = map['users'] as Map<String, dynamic>?;
+        final rawMeta = (map['stay'] as Map<String, dynamic>?)?['raw_metadata'] as Map<String, dynamic>?;
+        final bookingName = resolveBookingGuestName(rawMeta);
+        final bookingPhone = (rawMeta?['primaryGuest'] as Map<String, dynamic>?)?['phone'] as String?;
+        map['guest_name'] = bookingName ?? user?['name'] ?? 'Guest';
+        map['mobile_no'] = (bookingPhone != null && bookingPhone.isNotEmpty) ? bookingPhone : (user?['mobile_no'] ?? '');
+        return map;
+      }).toList();
     } on PostgrestException catch (e) {
       throw Exception('Failed to fetch pending allotment orders: ${e.message}');
     }
