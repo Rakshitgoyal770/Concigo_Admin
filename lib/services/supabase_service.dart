@@ -137,6 +137,23 @@ class SupabaseService {
 
   SupabaseClient get client => Supabase.instance.client;
 
+  /// Safely resolves the legal booking guest name from stay raw_metadata
+  static String? resolveBookingGuestName(Map<String, dynamic>? rawMetadata) {
+    if (rawMetadata == null) return null;
+    final pg = rawMetadata['primaryGuest'];
+    if (pg is! Map) return null;
+    final first = (pg['firstName'] as String?)?.trim() ?? '';
+    final last = (pg['lastName'] as String?)?.trim() ??
+        (pg['name'] is String ? (pg['name'] as String).trim() : '');
+    final full = [first, last].where((s) => s.isNotEmpty).join(' ');
+    if (full.isNotEmpty) return full;
+    final singleName = pg['name'];
+    if (singleName is String && singleName.trim().isNotEmpty) {
+      return singleName.trim();
+    }
+    return null;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // PROPERTIES
   // ─────────────────────────────────────────────────────────────────────────
@@ -552,7 +569,7 @@ class SupabaseService {
       final response = await client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), checkin_requests(remark), early_late_offer_accepts(type, time_selected)',
+            'stay_id, check_in_date, check_out_date, status, main_user_id, raw_metadata, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), checkin_requests(remark), early_late_offer_accepts(type, time_selected)',
           )
           .eq('hotel_id', propertyId)
           .eq('status', 'Active')
@@ -571,7 +588,7 @@ class SupabaseService {
       final response = await client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), early_late_offer_accepts(type, time_selected)',
+            'stay_id, check_in_date, check_out_date, status, main_user_id, raw_metadata, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), early_late_offer_accepts(type, time_selected)',
           )
           .eq('hotel_id', propertyId)
           .isFilter('deleted_at', null)
@@ -830,7 +847,7 @@ class SupabaseService {
       final response = await client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, '
+            'stay_id, check_in_date, check_out_date, status, main_user_id, raw_metadata, '
             'users(name, mobile_no), '
             'stay_rooms(room_id, rooms(room_number)), '
             'checkin_requests(id, status, checkin_code, remark)',
@@ -844,8 +861,11 @@ class SupabaseService {
       for (final row in (response as List)) {
         final map = Map<String, dynamic>.from(row as Map);
         final userMap = map['users'] as Map<String, dynamic>?;
-        map['guest_name'] = userMap?['name'] as String? ?? '—';
-        map['mobile_no'] = userMap?['mobile_no'] as String? ?? '—';
+        final rawMeta = map['raw_metadata'] as Map<String, dynamic>?;
+        final bookingName = resolveBookingGuestName(rawMeta);
+        final bookingPhone = (rawMeta?['primaryGuest'] as Map<String, dynamic>?)?['phone'] as String?;
+        map['guest_name'] = bookingName ?? userMap?['name'] as String? ?? '—';
+        map['mobile_no'] = (bookingPhone != null && bookingPhone.isNotEmpty) ? bookingPhone : (userMap?['mobile_no'] as String? ?? '—');
 
         // Resolve assigned rooms (all entries in stay_rooms)
         final stayRooms = map['stay_rooms'] as List?;
@@ -2600,7 +2620,7 @@ class SupabaseService {
       final response = await client
           .from('spa_orders')
           .select(
-            'spa_order_id, user_id, stay_id, property_id, spa_item_id, slot_id, service_name, slot_time, mobile_no, price, status, notes, created_at, updated_at, assigned_to, users(name, mobile_no)',
+            'spa_order_id, user_id, stay_id, property_id, spa_item_id, slot_id, service_name, slot_time, mobile_no, price, status, notes, created_at, updated_at, assigned_to, users(name, mobile_no), stay(raw_metadata)',
           )
           .eq('property_id', propertyId)
           .isFilter('deleted_at', null)
@@ -2670,9 +2690,11 @@ class SupabaseService {
         final roomId = stayId != null ? stayToRoom[stayId] : null;
         final roomNumber = roomId != null ? roomIdToNumber[roomId] ?? '-' : '-';
         final assignedTo = o['assigned_to'] as String?;
+        final stayMap = o['stay'] as Map<String, dynamic>?;
+        final rawMeta = stayMap?['raw_metadata'] as Map<String, dynamic>?;
         return {
           ...o,
-          'guest_name': user?['name'] ?? 'Guest',
+          'guest_name': resolveBookingGuestName(rawMeta) ?? user?['name'] ?? 'Guest',
           'room_number': roomNumber,
           'assigned_emp_name': assignedTo != null
               ? empIdToName[assignedTo]
@@ -2753,7 +2775,7 @@ class SupabaseService {
       final response = await client
           .from('spa_orders')
           .select(
-            'spa_order_id, user_id, stay_id, service_name, slot_time, mobile_no, price, status, created_at, assigned_to, users(name)',
+            'spa_order_id, user_id, stay_id, service_name, slot_time, mobile_no, price, status, created_at, assigned_to, users(name), stay(raw_metadata)',
           )
           .eq('assigned_to', empId)
           .isFilter('deleted_at', null)
@@ -2802,9 +2824,10 @@ class SupabaseService {
         final stayId = o['stay_id'] as String?;
         final roomId = stayId != null ? stayToRoom[stayId] : null;
         final roomNumber = roomId != null ? roomIdToNumber[roomId] ?? '-' : '-';
+        final rawMeta = (o['stay'] as Map<String, dynamic>?)?['raw_metadata'] as Map<String, dynamic>?;
         return {
           ...o,
-          'guest_name': user?['name'] ?? 'Guest',
+          'guest_name': resolveBookingGuestName(rawMeta) ?? user?['name'] ?? 'Guest',
           'room_number': roomNumber,
         };
       }).toList();
@@ -2825,7 +2848,7 @@ class SupabaseService {
       final response = await client
           .from('laundry_requests')
           .select(
-            'request_id, property_id, room_id, user_id, stay_id, mobile_no, service_requested, item_count, preferred_pickup_time, special_instructions, status, created_at, updated_at, assigned_to, users(name, mobile_no), rooms(room_number)',
+            'request_id, property_id, room_id, user_id, stay_id, mobile_no, service_requested, item_count, preferred_pickup_time, special_instructions, status, created_at, updated_at, assigned_to, users(name, mobile_no), rooms(room_number), stay(raw_metadata)',
           )
           .eq('property_id', propertyId)
           .isFilter('deleted_at', null)
@@ -2857,9 +2880,10 @@ class SupabaseService {
         final user = r['users'] as Map<String, dynamic>?;
         final room = r['rooms'] as Map<String, dynamic>?;
         final assignedTo = r['assigned_to'] as String?;
+        final rawMeta = (r['stay'] as Map<String, dynamic>?)?['raw_metadata'] as Map<String, dynamic>?;
         return {
           ...r,
-          'guest_name': user?['name'] ?? 'Guest',
+          'guest_name': resolveBookingGuestName(rawMeta) ?? user?['name'] ?? 'Guest',
           'room_number': room?['room_number'] ?? '-',
           'assigned_emp_name': assignedTo != null
               ? empIdToName[assignedTo]
@@ -2939,7 +2963,7 @@ class SupabaseService {
       final response = await client
           .from('laundry_requests')
           .select(
-            'request_id, user_id, stay_id, room_id, mobile_no, service_requested, preferred_pickup_time, status, created_at, assigned_to, users(name), rooms(room_number)',
+            'request_id, user_id, stay_id, room_id, mobile_no, service_requested, preferred_pickup_time, status, created_at, assigned_to, users(name), rooms(room_number), stay(raw_metadata)',
           )
           .eq('assigned_to', empId)
           .isFilter('deleted_at', null)
@@ -2949,9 +2973,10 @@ class SupabaseService {
         final map = r as Map<String, dynamic>;
         final user = map['users'] as Map<String, dynamic>?;
         final room = map['rooms'] as Map<String, dynamic>?;
+        final rawMeta = (map['stay'] as Map<String, dynamic>?)?['raw_metadata'] as Map<String, dynamic>?;
         return {
           ...map,
-          'guest_name': user?['name'] ?? 'Guest',
+          'guest_name': resolveBookingGuestName(rawMeta) ?? user?['name'] ?? 'Guest',
           'room_number': room?['room_number'] ?? '-',
         };
       }).toList();
@@ -3091,7 +3116,7 @@ class SupabaseService {
       final response = await client
           .from('service_bills')
           .select(
-            'bill_id, serv_id, property_id, stay_id, user_id, room_no, amt, payment_status, payment_method, created_by, created_at, updated_at, users(name)',
+            'bill_id, serv_id, property_id, stay_id, user_id, room_no, amt, payment_status, payment_method, created_by, created_at, updated_at, users(name), stay(raw_metadata)',
           )
           .eq('property_id', propertyId)
           .eq('created_by', empId)
@@ -3101,7 +3126,8 @@ class SupabaseService {
       return (response as List).map((b) {
         final map = b as Map<String, dynamic>;
         final user = map['users'] as Map<String, dynamic>?;
-        return {...map, 'guest_name': user?['name'] ?? 'Guest'};
+        final rawMeta = (map['stay'] as Map<String, dynamic>?)?['raw_metadata'] as Map<String, dynamic>?;
+        return {...map, 'guest_name': resolveBookingGuestName(rawMeta) ?? user?['name'] ?? 'Guest'};
       }).toList();
     } on PostgrestException catch (e) {
       throw Exception('Failed to fetch bills: ${e.message}');
@@ -3411,12 +3437,13 @@ class SupabaseService {
             try {
               final stayResp = await client
                   .from('stay')
-                  .select('main_user_id, users(name)')
+                  .select('main_user_id, raw_metadata, users(name)')
                   .eq('stay_id', stayId)
                   .maybeSingle();
               if (stayResp != null) {
+                final rawMeta = stayResp['raw_metadata'] as Map<String, dynamic>?;
                 final userMap = stayResp['users'] as Map<String, dynamic>?;
-                map['guest_name'] = userMap?['name'] as String? ?? '—';
+                map['guest_name'] = resolveBookingGuestName(rawMeta) ?? userMap?['name'] as String? ?? '—';
               }
             } catch (_) {}
 
@@ -3739,7 +3766,7 @@ class SupabaseService {
       // Fetch all active stays for this property
       final staysResp = await client
           .from('stay')
-          .select('stay_id, main_user_id, check_out_date, users(name)')
+          .select('stay_id, main_user_id, check_out_date, raw_metadata, users(name)')
           .eq('hotel_id', propertyId)
           .eq('status', 'Active');
 
@@ -3765,7 +3792,8 @@ class SupabaseService {
         if (stayId == null || occupiedStayIds.contains(stayId)) continue;
 
         final userMap = map['users'] as Map<String, dynamic>?;
-        map['guest_name'] = userMap?['name'] as String? ?? '—';
+        final rawMeta = map['raw_metadata'] as Map<String, dynamic>?;
+        map['guest_name'] = resolveBookingGuestName(rawMeta) ?? userMap?['name'] as String? ?? '—';
 
         // Resolve room number
         try {
@@ -3805,7 +3833,7 @@ class SupabaseService {
       final response = await client
           .from('bellboy_calls')
           .select(
-            'id, status, room_number, created_at, stay_id, user_id, users(name, mobile_no)',
+            'id, status, room_number, created_at, stay_id, user_id, users(name, mobile_no), stay(raw_metadata)',
           )
           .inFilter('status', ['called', 'reached'])
           .order('created_at', ascending: false);
@@ -3814,7 +3842,8 @@ class SupabaseService {
       for (final row in (response as List)) {
         final map = Map<String, dynamic>.from(row as Map);
         final userMap = map['users'] as Map<String, dynamic>?;
-        map['guest_name'] = userMap?['name'] as String? ?? 'Guest';
+        final rawMeta = (map['stay'] as Map<String, dynamic>?)?['raw_metadata'] as Map<String, dynamic>?;
+        map['guest_name'] = resolveBookingGuestName(rawMeta) ?? userMap?['name'] as String? ?? 'Guest';
         map['guest_phone'] = userMap?['mobile_no'] as String? ?? '';
         map['room_number'] = (map['room_number'] ?? '—').toString();
         map['request_type'] = 'Luggage Transfer';

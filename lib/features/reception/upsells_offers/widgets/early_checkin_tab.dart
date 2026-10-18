@@ -680,8 +680,12 @@ class _EarlyCheckinTabState extends ConsumerState<EarlyCheckinTab> {
                 itemBuilder: (context, index) {
                   final accept = earlyAccepts[index];
                   final user = accept['users'] as Map<String, dynamic>?;
-                  final guestName = user?['name'] ?? accept['guest_name'] ?? 'Guest';
-                  final phone = user?['mobile_no'] ?? accept['mobile_no'] ?? '';
+                  final guestName = (accept['guest_name']?.toString().isNotEmpty == true
+                      ? accept['guest_name']
+                      : user?['name']) ?? 'Guest';
+                  final phone = (accept['guest_phone']?.toString().isNotEmpty == true
+                      ? accept['guest_phone']
+                      : user?['mobile_no'] ?? accept['mobile_no']) ?? '';
                   final amount = accept['amount_paid'] ?? 0;
                   final timeSelectedStr = accept['time_selected']?.toString();
                   final timeSelected = timeSelectedStr != null ? DateTime.tryParse(timeSelectedStr) : null;

@@ -526,8 +526,19 @@ class _CheckinRequestsScreenState extends State<CheckinRequestsScreen>
 
   Widget _buildRequestCard(Map<String, dynamic> request) {
     final userMap = request['users'] as Map<String, dynamic>?;
-    final guestName = userMap?['name'] as String? ?? 'Guest';
-    final mobile = userMap?['mobile_no'] as String? ?? '-';
+    final stayData = request['stay_data'] as Map<String, dynamic>?;
+    final rawMeta = stayData?['raw_metadata'] as Map<String, dynamic>?;
+    final pg = rawMeta?['primaryGuest'] as Map<String, dynamic>?;
+    final bookingName = pg != null ? ([
+      (pg['firstName'] as String? ?? '').trim(),
+      ((pg['lastName'] ?? pg['name']) as String? ?? '').trim()
+    ].where((s) => s.isNotEmpty).join(' ').trim().isNotEmpty
+        ? [((pg['firstName'] as String?) ?? '').trim(), ((pg['lastName'] ?? pg['name']) as String?) ?? ''].where((s) => s.isNotEmpty).join(' ').trim()
+        : (pg['name'] as String?)?.trim()) : null;
+    final guestName = (bookingName != null && bookingName.isNotEmpty) ? bookingName : (userMap?['name'] as String? ?? 'Guest');
+    final mobile = (pg?['phone'] as String?)?.trim().isNotEmpty == true
+        ? pg!['phone'] as String
+        : userMap?['mobile_no'] as String? ?? '-';
     final status = request['status'] as String? ?? 'pending';
     final stayId = request['stay_id'] as String? ?? '';
     final submittedReq = request['submitted_req'];
@@ -753,11 +764,27 @@ class _CheckinRequestDetailScreenState
   }
 
   String get _guestName {
+    final stayData = widget.request['stay_data'] as Map<String, dynamic>?;
+    final rawMeta = stayData?['raw_metadata'] as Map<String, dynamic>?;
+    final pg = rawMeta?['primaryGuest'] as Map<String, dynamic>?;
+    if (pg != null) {
+      final first = (pg['firstName'] as String? ?? '').trim();
+      final last = ((pg['lastName'] ?? pg['name']) as String? ?? '').trim();
+      final full = [first, last].where((s) => s.isNotEmpty).join(' ').trim();
+      if (full.isNotEmpty) return full;
+      final single = (pg['name'] as String?)?.trim() ?? '';
+      if (single.isNotEmpty) return single;
+    }
     final userMap = widget.request['users'] as Map<String, dynamic>?;
     return userMap?['name'] as String? ?? 'Guest';
   }
 
   String get _guestMobile {
+    final stayData = widget.request['stay_data'] as Map<String, dynamic>?;
+    final rawMeta = stayData?['raw_metadata'] as Map<String, dynamic>?;
+    final pg = rawMeta?['primaryGuest'] as Map<String, dynamic>?;
+    final bookingPhone = (pg?['phone'] as String?)?.trim() ?? '';
+    if (bookingPhone.isNotEmpty) return bookingPhone;
     final userMap = widget.request['users'] as Map<String, dynamic>?;
     return userMap?['mobile_no'] as String? ?? '-';
   }
