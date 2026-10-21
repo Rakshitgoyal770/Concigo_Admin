@@ -9,7 +9,8 @@ import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../core/widgets/luxury_text_field.dart';
 import '../../../../data/providers/supabase_providers.dart';
 import '../../../../data/providers/reception_providers.dart';
-import '../../../../services/pms/pms_factory.dart';
+import '../../../../services/function_region.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ActivateUpcomingStayModal extends ConsumerStatefulWidget {
   final Map<String, dynamic> stay;
@@ -139,123 +140,88 @@ class _ActivateUpcomingStayModalState extends ConsumerState<ActivateUpcomingStay
       // 5. Identify rooms that are newly added
       final addedRids = _selectedRoomIds.where((id) => !existingRids.contains(id)).toList();
 
-      // 6. Delete removed rooms from stay_rooms and free them up in rooms table
+      // 6. Move the stay's room links. These MUST succeed - an error here aborts
+      //    the check-in (the database also rejects a room another stay holds).
       for (final rid in removedRids) {
         await supabaseService.client
             .from('stay_rooms')
             .delete()
             .eq('stay_id', stayId)
             .eq('room_id', rid);
-
-        // Release the old room
-        try {
-          await supabaseService.client
-              .from('rooms')
-              .update({
-                'is_booked': false,
-                'status': 'vacant',
-                'updated_at': DateTime.now().toIso8601String(),
-              })
-              .eq('room_id', rid);
-        } catch (_) {}
       }
-
-      // 7. Insert newly added rooms into stay_rooms
       for (final rid in addedRids) {
-        try {
-          await supabaseService.client.from('stay_rooms').insert({
-            'stay_id': stayId,
-            'room_id': rid,
-          });
-        } catch (_) {}
+        await supabaseService.client.from('stay_rooms').insert({
+          'stay_id': stayId,
+          'room_id': rid,
+        });
       }
 
-      // 8. Mark all currently selected rooms as Occupied & booked
-      for (final rid in _selectedRoomIds) {
-        await roomService.updateRoomStatus(rid, 'occupied');
-        try {
-          await supabaseService.client
-              .from('rooms')
-              .update({
-                'is_booked': true,
-                'status': 'occupied',
-                'updated_at': DateTime.now().toIso8601String(),
-              })
-              .eq('room_id', rid);
-        } catch (_) {}
-      }
-
-      // 9. Activate the stay record in Supabase
+      // 7. Activate the stay BEFORE touching room flags, so a failure here can
+      //    never leave rooms marked occupied for a stay that is not active.
       await supabaseService.client
           .from('stay')
-          .update({'status': 'Active'})
+          .update({'status': 'Active', 'updated_at': DateTime.now().toIso8601String()})
           .eq('stay_id', stayId);
 
-      // 10. Update checkin_requests if applicable
+      // 8-10. Follow-up steps. The guest IS checked in at this point, so a failure
+      //    here is reported to the receptionist rather than undoing the check-in.
+      final warnings = <String>[];
+
+      for (final rid in removedRids) {
+        try {
+          await roomService.updateRoomStatus(rid, 'vacant');
+        } catch (_) {
+          warnings.add('could not release the previous room');
+        }
+      }
+      for (final rid in _selectedRoomIds) {
+        try {
+          await roomService.updateRoomStatus(rid, 'occupied');
+        } catch (_) {
+          warnings.add('could not mark a room occupied');
+        }
+      }
+
       if (checkinRequestId != null && checkinRequestId.isNotEmpty) {
         try {
           await supabaseService.client
               .from('checkin_requests')
-              .update({'accept_type': 'REGULAR', 'status': 'COMPLETED'})
+              .update({'accept_type': 'REGULAR', 'status': 'approved'})
               .eq('id', checkinRequestId);
-        } catch (_) {}
+        } catch (_) {
+          warnings.add('could not mark the KYC request approved');
+        }
       }
 
-      // 11. 2-Way Sync: Check-in reservation in Apaleo PMS
+      // 11. Check the guest in at the PMS through the server (it holds the PMS
+      //     credentials, picks the right hotel's token and retries safely).
+      String? roomNum;
       try {
-        String? pmsResId;
-        final remark = stay['remark']?.toString() ?? '';
-        if (remark.startsWith('PMS:')) {
-          pmsResId = remark.replaceFirst('PMS:', '').trim();
-        } else {
-          final crList = await supabaseService.client
-              .from('checkin_requests')
-              .select('remark')
-              .eq('stay_id', stayId)
-              .order('created_at', ascending: false)
-              .limit(1);
-          if ((crList as List).isNotEmpty) {
-            final r = crList.first['remark']?.toString() ?? '';
-            if (r.startsWith('PMS:')) {
-              pmsResId = r.replaceFirst('PMS:', '').trim();
-            }
-          }
+        final roomRow = await supabaseService.client
+            .from('rooms')
+            .select('room_number')
+            .eq('room_id', _selectedRoomIds.first)
+            .maybeSingle();
+        roomNum = roomRow?['room_number']?.toString();
+      } catch (_) {}
+      try {
+        final res = await supabaseService.client.functions.invoke(
+          'checkin-to-pms',
+          queryParameters: kFunctionRegion,
+          body: {'stay_id': stayId, if (roomNum != null) 'room_number': roomNum},
+        );
+        final data = res.data;
+        if (data is Map && data['success'] == false) {
+          warnings.add('the PMS check-in failed (${data['error'] ?? data['note'] ?? 'unknown'})');
         }
-
-        if (pmsResId != null && pmsResId.isNotEmpty) {
-          final propId = supabaseService.currentSession?.propertyId ?? '';
-          if (propId.isNotEmpty) {
-            try {
-              final pmsContext = await PmsFactory.getContextForHotel(
-                client: supabaseService.client,
-                propertyId: propId,
-              );
-              String? roomNum;
-              if (_selectedRoomIds.isNotEmpty) {
-                try {
-                  final roomRow = await supabaseService.client
-                      .from('rooms')
-                      .select('room_number')
-                      .eq('room_id', _selectedRoomIds.first)
-                      .maybeSingle();
-                  roomNum = roomRow?['room_number']?.toString();
-                } catch (_) {}
-              }
-
-              debugPrint('[ActivateModal] Syncing check-in to ${pmsContext.adapter.provider} for $pmsResId (Room: $roomNum)...');
-              await pmsContext.adapter.checkInReservation(
-                pmsReservationId: pmsResId,
-                assignedRoomNumber: roomNum,
-              );
-            } catch (innerErr) {
-              debugPrint('[ActivateModal] Inner PMS check-in sync error: $innerErr');
-            }
-          }
-        }
-      } catch (pmsErr) {
-        debugPrint('[ActivateModal] PMS check-in sync error: $pmsErr');
+      } on FunctionException catch (e) {
+        final d = e.details;
+        final msg = d is Map ? (d['error'] ?? d['message'])?.toString() : d?.toString();
+        warnings.add('the PMS check-in failed (${msg ?? 'status ${e.status}'})');
+      } catch (e) {
+        warnings.add('the PMS check-in failed ($e)');
       }
-
+      final warningText = warnings.toSet().join('; ');
 
       // 12. Invalidate Riverpod Reception State
       ref.read(receptionRefreshSignalProvider.notifier).state++;
@@ -264,8 +230,14 @@ class _ActivateUpcomingStayModalState extends ConsumerState<ActivateUpcomingStay
         Navigator.of(context).pop(true);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: AppColors.success,
-            content: Text('Stay successfully activated for $guestName!'),
+            backgroundColor: warningText.isEmpty ? AppColors.success : AppColors.attention,
+            duration: Duration(seconds: warningText.isEmpty ? 4 : 12),
+            showCloseIcon: warningText.isNotEmpty,
+            content: Text(
+              warningText.isEmpty
+                  ? 'Stay successfully activated for $guestName!'
+                  : '$guestName is checked in, but $warningText. Please review the room and PMS status.',
+            ),
           ),
         );
       }

@@ -8,6 +8,7 @@ import '../../../../core/widgets/luxury_button.dart';
 import '../../../../data/providers/reception_providers.dart';
 import '../../arrivals_checkin/widgets/kyc_inspector_modal.dart';
 import '../../arrivals_checkin/widgets/activate_upcoming_stay_modal.dart';
+import '../../../../core/widgets/async_states.dart';
 
 class AttentionRequiredSection extends ConsumerWidget {
   final VoidCallback? onNavigateToArrivals;
@@ -228,8 +229,16 @@ class AttentionRequiredSection extends ConsumerWidget {
           ),
         );
       },
-      loading: () => const SizedBox.shrink(),
-      error: (_, __) => const SizedBox.shrink(),
+      loading: () => const PanelLoading(label: 'Checking what needs attention…'),
+      error: (e, _) => PanelError(
+        error: e,
+        what: 'items needing attention',
+        onRetry: () {
+          ref.invalidate(checkinRequestsProvider);
+          ref.invalidate(upcomingStaysProvider);
+          ref.invalidate(bellboyQueueProvider);
+        },
+      ),
     );
   }
 }

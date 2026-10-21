@@ -711,10 +711,10 @@ class PmsSyncService {
           final crStatusUpdate = <String, dynamic>{
             'remark': pmsTag,
           };
+          // checkin_request_status enum has no 'cancelled'; Ended stays keep
+          // their existing status so the remark update isn't rejected.
           if (stayStatus == 'Active') {
             crStatusUpdate['status'] = 'approved';
-          } else if (stayStatus == 'Ended') {
-            crStatusUpdate['status'] = 'cancelled';
           }
           await _client.from('checkin_requests')
               .update(crStatusUpdate)
@@ -808,19 +808,32 @@ class PmsSyncService {
       final incomingName = guest.fullName.trim();
 
       if (phone.isNotEmpty) {
-        // ISSUE-10: Normalize to E.164 before matching to prevent last-10-digit
-        // collisions between different country codes (e.g. +1-9518 vs +91-9518).
         final normalized = _normalizeToE164(phone);
+
+        // Authoritative Server-side Resolution
+        try {
+          final rpcUserId = await _client.rpc(
+            'resolve_guest',
+            params: {
+              'p_phone': normalized,
+              'p_name': incomingName.isNotEmpty ? incomingName : null,
+              'p_email': email.isNotEmpty ? email : null,
+            },
+          );
+          if (rpcUserId != null && rpcUserId.toString().isNotEmpty) {
+            return rpcUserId.toString();
+          }
+        } catch (_) {}
+
         final last10 = phone.length >= 10 ? phone.substring(phone.length - 10) : phone;
 
-        // 1. Look for ACTIVE, non-deleted user with exact normalized phone (latest first)
+        // 1. Look for ACTIVE, non-deleted user with exact normalized phone
         var existingByPhone = await _client
             .from('users')
             .select('user_id, name, email')
             .eq('mobile_no', normalized)
             .eq('status', 'active')
             .isFilter('deleted_at', null)
-            .order('created_at', ascending: false)
             .limit(1);
 
         // 2. Fallback to last 10 digits (active, non-deleted, latest first)

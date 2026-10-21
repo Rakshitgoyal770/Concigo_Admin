@@ -7,6 +7,8 @@ import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../core/widgets/luxury_button.dart';
 import '../../../../data/providers/reception_providers.dart';
 import '../../arrivals_checkin/widgets/activate_upcoming_stay_modal.dart';
+import '../../../../core/widgets/stay_times_row.dart';
+import '../../../../core/widgets/async_states.dart';
 
 class TodayArrivalsOverview extends ConsumerWidget {
   final VoidCallback? onViewAllArrivals;
@@ -107,6 +109,8 @@ class TodayArrivalsOverview extends ConsumerWidget {
                             ),
                             const SizedBox(height: 3),
                             Text('Room $roomNum · Phone: $phone', style: AppTypography.caption),
+                            const SizedBox(height: 3),
+                            StayTimesRow(stay: stay, showCheckOut: false),
                             const SizedBox(height: 8),
                             LuxuryButton(
                               text: 'Verify & Check In',
@@ -147,6 +151,8 @@ class TodayArrivalsOverview extends ConsumerWidget {
                                   ),
                                   const SizedBox(height: 2),
                                   Text('Phone: $phone · Online Pre-Booking', style: AppTypography.caption),
+                                  const SizedBox(height: 2),
+                                  StayTimesRow(stay: stay, showCheckOut: false),
                                 ],
                               ),
                             ],
@@ -167,8 +173,8 @@ class TodayArrivalsOverview extends ConsumerWidget {
                     },
                   );
                 },
-                loading: () => const SizedBox.shrink(),
-                error: (_, __) => const SizedBox.shrink(),
+                loading: () => const PanelLoading(label: 'Loading arrivals…'),
+                error: (e, _) => PanelError(error: e, what: 'today\'s arrivals', onRetry: () => ref.invalidate(upcomingStaysProvider)),
               ),
             ],
           ),

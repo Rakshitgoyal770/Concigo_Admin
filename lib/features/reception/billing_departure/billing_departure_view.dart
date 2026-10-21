@@ -100,7 +100,11 @@ class BillingDepartureView extends ConsumerWidget {
                             final guestName = (stay['guest_name'] ?? stay['user_name'] ?? 'Guest').toString();
                             final phone = (stay['phone_number'] ?? stay['phone'] ?? '').toString();
                             final roomNum = (stay['room_number'] ?? stay['room_no'] ?? 'N/A').toString();
-                            final tariff = stay['total_amount'] ?? stay['tariff'] ?? 2500;
+                            final roomTariff = (stay['tariff'] is num ? (stay['tariff'] as num).toDouble() : double.tryParse(stay['tariff']?.toString() ?? '2500') ?? 2500.0);
+                            final totalAmount = (stay['total_amount'] is num ? (stay['total_amount'] as num).toDouble() : roomTariff);
+                            final billingSubtext = totalAmount > roomTariff
+                                ? '$phone • Tariff: ₹${roomTariff.toStringAsFixed(0)} • Total: ₹${totalAmount.toStringAsFixed(0)}'
+                                : '$phone • Tariff: ₹${roomTariff.toStringAsFixed(0)}';
 
                             if (isMobile) {
                               return Column(
@@ -126,7 +130,7 @@ class BillingDepartureView extends ConsumerWidget {
                                     ],
                                   ),
                                   AppSpacing.gapV4,
-                                  Text('$phone • Tariff: ₹$tariff', style: AppTypography.bodySmall),
+                                  Text(billingSubtext, style: AppTypography.bodySmall),
                                   AppSpacing.gapV8,
                                   Wrap(
                                     spacing: 8,
@@ -188,7 +192,7 @@ class BillingDepartureView extends ConsumerWidget {
                                               maxLines: 1,
                                             ),
                                             Text(
-                                              '$phone • Tariff: ₹$tariff',
+                                              billingSubtext,
                                               style: AppTypography.bodySmall,
                                               overflow: TextOverflow.ellipsis,
                                               maxLines: 1,

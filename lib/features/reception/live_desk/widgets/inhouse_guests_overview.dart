@@ -7,6 +7,8 @@ import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../core/widgets/luxury_button.dart';
 import '../../../../data/providers/reception_providers.dart';
 import '../../billing_departure/widgets/instant_checkout_modal.dart';
+import '../../../../core/widgets/stay_times_row.dart';
+import '../../../../core/widgets/async_states.dart';
 
 class InHouseGuestsOverview extends ConsumerWidget {
   final VoidCallback? onViewAllInHouse;
@@ -106,6 +108,8 @@ class InHouseGuestsOverview extends ConsumerWidget {
                             ),
                             const SizedBox(height: 3),
                             Text('Room $roomNum · Phone: $phone', style: AppTypography.caption),
+                            const SizedBox(height: 3),
+                            StayTimesRow(stay: stay, showCheckIn: false, showDay: true),
                             const SizedBox(height: 8),
                             LuxuryButton(
                               text: 'Folio & Checkout',
@@ -146,6 +150,8 @@ class InHouseGuestsOverview extends ConsumerWidget {
                                   ),
                                   const SizedBox(height: 2),
                                   Text('Phone: $phone · Active Stay', style: AppTypography.caption),
+                                  const SizedBox(height: 2),
+                                  StayTimesRow(stay: stay, showCheckIn: false, showDay: true),
                                 ],
                               ),
                             ],
@@ -166,8 +172,8 @@ class InHouseGuestsOverview extends ConsumerWidget {
                     },
                   );
                 },
-                loading: () => const SizedBox.shrink(),
-                error: (_, __) => const SizedBox.shrink(),
+                loading: () => const PanelLoading(label: 'Loading in-house guests…'),
+                error: (e, _) => PanelError(error: e, what: 'in-house guests', onRetry: () => ref.invalidate(activeStaysProvider)),
               ),
             ],
           ),

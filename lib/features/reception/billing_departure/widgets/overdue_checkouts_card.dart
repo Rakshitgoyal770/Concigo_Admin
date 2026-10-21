@@ -11,67 +11,31 @@ import '../../../../core/widgets/luxury_button.dart';
 import '../../../../data/providers/reception_providers.dart';
 import '../../../../data/providers/supabase_providers.dart';
 import 'instant_checkout_modal.dart';
+import '../../../../core/utils/stay_times.dart';
+import '../../../../core/widgets/async_states.dart';
 
 /// Calculates the exact departure DateTime taking into account:
 /// 1. early_late_offer_accepts (redeemed Late Checkout Pass, e.g. '16:00:00' / 04:00 PM)
 /// 2. stay.check_out_time (e.g. '14:00:00' from a late pass)
 /// 3. hotel_property.checkout_time (e.g. '12:00:00' or '11:00:00')
 /// 4. ISO timestamp inside check_out_date
-DateTime? getStayDepartureDateTime(Map<String, dynamic> stay) {
-  final outStr = stay['check_out_date']?.toString();
-  if (outStr == null || outStr.isEmpty) return null;
+/// The moment a stay's guest is due to leave: the hotel's standard check-out
+/// time on the check-out date, moved later by a confirmed late check-out pass.
+/// (This used to default to a hard-coded 11:00 because the stay queries never
+/// fetched the hotel's own check-out time.)
+DateTime? getStayDepartureDateTime(
+  Map<String, dynamic> stay,
+  HotelTimes hotel,
+  List<StayPass> passes,
+) =>
+    StayTimes.resolve(stay: stay, hotel: hotel, passes: passes).checkOut;
 
-  final datePart = outStr.split('T')[0];
-  final date = DateTime.tryParse(datePart);
-  if (date == null) return null;
-
-  // 1. Check if there is an accepted late_out pass in early_late_offer_accepts
-  final accepts = stay['early_late_offer_accepts'] as List?;
-  if (accepts != null && accepts.isNotEmpty) {
-    final latePasses = accepts.where((a) {
-      final m = a as Map<String, dynamic>?;
-      return m?['type'] == 'late_out' && m?['time_selected'] != null;
-    }).toList();
-
-    if (latePasses.isNotEmpty) {
-      final lastLate = latePasses.last as Map<String, dynamic>;
-      final timeSelected = lastLate['time_selected']?.toString();
-      if (timeSelected != null && timeSelected.isNotEmpty) {
-        final parsedTime = DateTime.tryParse(timeSelected);
-        if (parsedTime != null) {
-          return DateTime(date.year, date.month, date.day, parsedTime.hour, parsedTime.minute);
-        }
-      }
-    }
-  }
-
-  // 2. If check_out_date contains full time component
-  if (outStr.contains('T') && !outStr.endsWith('T00:00:00.000') && !outStr.endsWith('T00:00:00')) {
-    final parsed = DateTime.tryParse(outStr);
-    if (parsed != null && (parsed.hour != 0 || parsed.minute != 0)) {
-      return parsed;
-    }
-  }
-
-  // 3. Fallback to stay.check_out_time or hotel default checkout_time
-  final timeStr = stay['check_out_time']?.toString() ??
-      stay['hotel_property']?['checkout_time']?.toString() ??
-      stay['hotel']?['checkout_time']?.toString() ??
-      '11:00:00';
-
-  int hour = 11;
-  int minute = 0;
-  try {
-    final parts = timeStr.split(':');
-    if (parts.isNotEmpty) hour = int.tryParse(parts[0]) ?? 11;
-    if (parts.length > 1) minute = int.tryParse(parts[1]) ?? 0;
-  } catch (_) {}
-
-  return DateTime(date.year, date.month, date.day, hour, minute);
-}
-
-bool isStayTimedOut(Map<String, dynamic> stay) {
-  final departureMoment = getStayDepartureDateTime(stay);
+bool isStayTimedOut(
+  Map<String, dynamic> stay,
+  HotelTimes hotel,
+  List<StayPass> passes,
+) {
+  final departureMoment = getStayDepartureDateTime(stay, hotel, passes);
   if (departureMoment == null) return false;
   return DateTime.now().isAfter(departureMoment);
 }
@@ -193,10 +157,18 @@ class OverdueCheckoutsCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final activeStaysAsync = ref.watch(activeStaysProvider);
+    final hotel = ref.watch(hotelTimesProvider).valueOrNull;
+    final passesByStay = ref.watch(stayPassesProvider).valueOrNull ?? const <String, List<StayPass>>{};
+
+    // Without the hotel's real check-out time we can't tell who is overdue.
+    if (hotel == null) return const SizedBox.shrink();
+
+    List<StayPass> passesFor(Map<String, dynamic> stay) =>
+        passesByStay[(stay['stay_id'] ?? stay['id'])?.toString()] ?? const <StayPass>[];
 
     return activeStaysAsync.when(
       data: (stays) {
-        final overdueStays = stays.where(isStayTimedOut).toList();
+        final overdueStays = stays.where((s) => isStayTimedOut(s, hotel, passesFor(s))).toList();
 
         if (overdueStays.isEmpty) {
           if (hideIfEmpty) return const SizedBox.shrink();
@@ -299,14 +271,8 @@ class OverdueCheckoutsCard extends ConsumerWidget {
                       final roomNum = (stay['room_number'] ?? stay['room_no'] ?? 'N/A').toString();
                       final outStr = stay['check_out_date']?.toString().split('T')[0] ?? '';
 
-                      final departureMoment = getStayDepartureDateTime(stay);
-                      String timeLabel = '11:00 AM';
-                      if (departureMoment != null) {
-                        final h = departureMoment.hour % 12 == 0 ? 12 : departureMoment.hour % 12;
-                        final m = departureMoment.minute.toString().padLeft(2, '0');
-                        final p = departureMoment.hour >= 12 ? 'PM' : 'AM';
-                        timeLabel = '$h:$m $p';
-                      }
+                      final timeInfo = StayTimes.resolve(stay: stay, hotel: hotel, passes: passesFor(stay));
+                      final timeLabel = timeInfo.checkOut != null ? StayTimes.clock(timeInfo.checkOut!) : '—';
 
                       final roomBadge = Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -439,8 +405,8 @@ class OverdueCheckoutsCard extends ConsumerWidget {
         ),
       );
     },
-    loading: () => const SizedBox.shrink(),
-      error: (_, __) => const SizedBox.shrink(),
+    loading: () => hideIfEmpty ? const SizedBox.shrink() : const PanelLoading(label: 'Checking departures…'),
+      error: (e, _) => PanelError(error: e, what: 'departures', onRetry: () => ref.invalidate(activeStaysProvider)),
     );
   }
 }

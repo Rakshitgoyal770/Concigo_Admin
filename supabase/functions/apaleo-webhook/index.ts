@@ -405,8 +405,16 @@ async function ingestReservation(
       roomId = nr?.room_id as string
     }
     if (roomId) {
-      const { data: existingSr } = await supabase.from('stay_rooms').select('id').eq('stay_id', stayId).eq('room_id', roomId).limit(1)
-      if (!existingSr?.length) {
+      // Clean up any stale room associations that differ from Apaleo
+      const { data: existingSr } = await supabase.from('stay_rooms').select('id, room_id').eq('stay_id', stayId)
+      for (const esr of (existingSr || [])) {
+        if (esr.room_id !== roomId) {
+          await supabase.from('stay_rooms').delete().eq('id', esr.id)
+          await supabase.from('rooms').update({ is_booked: false }).eq('room_id', esr.room_id)
+        }
+      }
+      const hasLink = (existingSr || []).some((x: any) => x.room_id === roomId)
+      if (!hasLink) {
         await supabase.from('stay_rooms').insert({ stay_id: stayId, room_id: roomId })
       }
       if (stayStatus === 'Active') await supabase.from('rooms').update({ is_booked: true, updated_at: new Date().toISOString() }).eq('room_id', roomId)

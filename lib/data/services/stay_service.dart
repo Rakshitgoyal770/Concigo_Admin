@@ -39,20 +39,21 @@ class StayService {
       }).toList();
     } catch (e) {
       debugPrint('[StayService] fetchUpcomingStays error: $e');
-      return [];
+      rethrow; // let the panel show an error with Retry, not an empty list
     }
   }
 
-  /// Fetch all active (checked-in) stays.
-  /// CENTRAL ENGINE: Reads exclusively from v_reception_feed.
+  /// Fetch all active (checked-in) stays with tariff, billing, and folio details.
   Future<List<Map<String, dynamic>>> fetchActiveStays({String? propertyId}) async {
     final propId = propertyId ?? currentPropertyId;
     if (propId == null) return [];
 
     try {
-      final feed = await _supabaseService.fetchReceptionFeed(propId);
+      final stays = await _supabaseService.fetchActiveStays(propId);
+      if (stays.isNotEmpty) return stays;
 
-      // Filter to Active status only
+      // Fallback to reception feed if direct query returns empty
+      final feed = await _supabaseService.fetchReceptionFeed(propId);
       return feed.where((s) {
         final status = (s['status'] as String? ?? '').toLowerCase();
         return status == 'active';
@@ -63,11 +64,13 @@ class StayService {
         map['room_number'] = s['room_number'];
         map['room_id'] = s['room_id'];
         map['pms_reservation_id'] = s['pms_reservation_id'];
+        map['tariff'] = 2500;
+        map['total_amount'] = 2500;
         return map;
       }).toList();
     } catch (e) {
       debugPrint('[StayService] fetchActiveStays error: $e');
-      return [];
+      rethrow; // let the panel show an error with Retry, not an empty list
     }
   }
 

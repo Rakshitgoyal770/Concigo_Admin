@@ -1,3 +1,4 @@
+import '../../core/utils/stay_times.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../services/supabase_service.dart';
 import 'supabase_providers.dart';
@@ -25,16 +26,8 @@ final resolvedPropertyIdProvider = FutureProvider<String>((ref) async {
       return persisted.propertyId;
     }
   } catch (_) {}
-  try {
-    final props = await SupabaseService.instance.fetchActiveProperties();
-    if (props.isNotEmpty) {
-      final preferred = props.firstWhere(
-        (p) => (p['name'] as String? ?? '').toLowerCase().contains('concigo'),
-        orElse: () => props.first,
-      );
-      return preferred['property_id'] as String;
-    }
-  } catch (_) {}
+  // No verified session → no property. (Previously fell back to the first
+  // active hotel, exposing its data to anyone who reached this screen.)
   return '';
 });
 
@@ -101,6 +94,32 @@ final activeOffersProvider = FutureProvider<List<Map<String, dynamic>>>((ref) as
   return await offerService.fetchActiveOffers(propertyId: propId);
 });
 
+/// The selected hotel's standard check-in / check-out times.
+final hotelTimesProvider = FutureProvider<HotelTimes>((ref) async {
+  ref.watch(receptionRefreshSignalProvider);
+  final propId = await ref.watch(resolvedPropertyIdProvider.future);
+  if (propId.isEmpty) return const HotelTimes();
+  final row = await SupabaseService.instance.fetchHotelTimes(propId);
+  return HotelTimes.fromRow(row);
+});
+
+/// Confirmed early / late passes per open stay (stay_id -> passes).
+/// Unconfirmed claims (abandoned or failed payments) are left out.
+final stayPassesProvider = FutureProvider<Map<String, List<StayPass>>>((ref) async {
+  ref.watch(receptionRefreshSignalProvider);
+  final propId = await ref.watch(resolvedPropertyIdProvider.future);
+  if (propId.isEmpty) return const {};
+  final rows = await SupabaseService.instance.fetchOpenStayPassRows(propId);
+  final byStay = <String, List<StayPass>>{};
+  for (final row in rows) {
+    final pass = StayPass.fromAccept(row);
+    final stayId = row['stay_id']?.toString();
+    if (pass == null || stayId == null) continue;
+    byStay.putIfAbsent(stayId, () => []).add(pass);
+  }
+  return byStay;
+});
+
 /// Early Check-In Offers Provider
 final earlyCheckinOffersProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
   ref.watch(receptionRefreshSignalProvider);
@@ -122,11 +141,9 @@ final earlyLateAcceptsProvider = FutureProvider<List<Map<String, dynamic>>>((ref
   ref.watch(receptionRefreshSignalProvider);
   final propId = await ref.watch(resolvedPropertyIdProvider.future);
   if (propId.isEmpty) return [];
-  try {
-    return await SupabaseService.instance.fetchEarlyLateAccepts(propId);
-  } catch (_) {
-    return [];
-  }
+  // Let failures propagate: the tabs show an error with a Retry button
+  // instead of claiming "no requests yet" when the query actually failed.
+  return await SupabaseService.instance.fetchEarlyLateAccepts(propId);
 });
 
 /// Aggregated Live Desk KPIs Model

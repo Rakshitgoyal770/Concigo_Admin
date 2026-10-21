@@ -5,6 +5,7 @@ import '../presentation/role_based_dashboard_screen/role_based_dashboard_screen.
 import '../presentation/info_screens/terms_and_conditions_screen.dart';
 import '../presentation/info_screens/privacy_policy_screen.dart';
 import '../presentation/info_screens/contact_us_screen.dart';
+import '../services/supabase_service.dart';
 
 class AppRoutes {
   static const String initial = '/';
@@ -19,16 +20,20 @@ class AppRoutes {
     initial: (context) => const LandingScreen(),
     landingScreen: (context) => const LandingScreen(),
     loginVerificationScreen: (context) => const LoginVerificationScreen(),
+    // Route guard: the dashboard is driven by the verified session only.
+    // Navigation arguments are not trusted (with none, this used to open
+    // Reception for the first active hotel without any login).
     roleBasedDashboardScreen: (context) {
-      final args =
-          ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+      final session = SupabaseService.instance.currentSession;
+      if (session == null) return const LandingScreen();
+      final fullName = '${session.empFirstName} ${session.empLastName}'.trim();
       return RoleBasedDashboardScreen(
-        role: args?['role'] as String? ?? 'RECEPTION_DESK',
-        employeeName: args?['employeeName'] as String? ?? 'Staff',
-        propertyName: args?['propertyName'] as String? ?? 'Zappy Hotel',
-        propertyId: args?['propertyId'] as String? ?? '',
-        serviceId: args?['serviceId'] as String?,
-        empId: args?['empId'] as String?,
+        role: session.role,
+        employeeName: fullName.isEmpty ? 'Staff' : fullName,
+        propertyName: session.propertyName,
+        propertyId: session.propertyId,
+        serviceId: session.serviceDept,
+        empId: session.empId,
       );
     },
     termsAndConditionsScreen: (context) => const TermsAndConditionsScreen(),

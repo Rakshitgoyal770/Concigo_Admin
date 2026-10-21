@@ -1,3 +1,5 @@
+import '../../../../core/widgets/async_states.dart';
+import 'pass_state_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -395,23 +397,27 @@ class _LateCheckoutTabState extends ConsumerState<LateCheckoutTab> {
 
                         final limit = (matchingOffer['limit'] as num?)?.toInt();
 
-                        // Count claimed passes for this category (only accepts within the current cycle)
-                        final offerUpdatedAtStr = matchingOffer['updated_at']?.toString() ?? matchingOffer['created_at']?.toString();
-                        final offerCycleStart = offerUpdatedAtStr != null ? DateTime.tryParse(offerUpdatedAtStr)?.toUtc() : null;
+                        // Rooms claimed against this offer in its current counting cycle.
+                        // Only paid / room-bill / in-progress passes count; abandoned or
+                        // failed attempts do not, and editing the price does not reset it.
+                        final cycleStr = (matchingOffer['limit_reset_at'] ??
+                                matchingOffer['updated_at'] ??
+                                matchingOffer['created_at'])
+                            ?.toString();
+                        final offerCycleStart =
+                            cycleStr != null ? DateTime.tryParse(cycleStr)?.toUtc() : null;
 
                         int claimedPasses = 0;
                         if (offerId != null && offerId.isNotEmpty) {
                           for (final a in accepts) {
-                            if (a['offer_id'] == offerId) {
-                              if (offerCycleStart != null) {
-                                final acceptCreatedAtStr = a['created_at']?.toString();
-                                final acceptCreatedAt = acceptCreatedAtStr != null ? DateTime.tryParse(acceptCreatedAtStr)?.toUtc() : null;
-                                if (acceptCreatedAt != null && acceptCreatedAt.isBefore(offerCycleStart)) {
-                                  continue; // Ignore accepts from prior cycles
-                                }
-                              }
-                              claimedPasses += 1;
+                            if (a['offer_id'] != offerId) continue;
+                            if (a['counts_toward_limit'] != true) continue;
+                            final createdStr = a['created_at']?.toString();
+                            final created = createdStr != null ? DateTime.tryParse(createdStr)?.toUtc() : null;
+                            if (offerCycleStart != null && created != null && created.isBefore(offerCycleStart)) {
+                              continue; // previous cycle
                             }
+                            claimedPasses += (a['room_count'] as num?)?.toInt() ?? 1;
                           }
                         }
                         final bool isSoldOut = limit != null && claimedPasses >= limit;
@@ -687,6 +693,7 @@ class _LateCheckoutTabState extends ConsumerState<LateCheckoutTab> {
                       ? accept['guest_phone']
                       : user?['mobile_no'] ?? accept['mobile_no']) ?? '';
                   final amount = accept['amount_paid'] ?? 0;
+                  final passStyle = PassStateStyle.of(accept['pass_state']?.toString());
                   final timeSelectedStr = accept['time_selected']?.toString();
                   final timeSelected = timeSelectedStr != null ? DateTime.tryParse(timeSelectedStr) : null;
                   final roomNums = (accept['room_numbers'] ?? accept['room_number'] ?? '').toString().trim();
@@ -698,7 +705,7 @@ class _LateCheckoutTabState extends ConsumerState<LateCheckoutTab> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        const Icon(Icons.check_circle_rounded, color: AppColors.purple, size: 16),
+                        Icon(passStyle.icon, color: passStyle.color, size: 16),
                         AppSpacing.gapH8,
                         Expanded(
                           child: Column(
@@ -712,6 +719,11 @@ class _LateCheckoutTabState extends ConsumerState<LateCheckoutTab> {
                                   Text(
                                     phone.isNotEmpty ? '$guestName ($phone)' : '$guestName',
                                     style: AppTypography.labelMedium,
+                                  ),
+                                  LuxuryBadge(
+                                    label: passStyle.label,
+                                    variant: passStyle.badge,
+                                    isSmall: true,
                                   ),
                                   if (roomNums.isNotEmpty && roomNums != '—' && roomNums != 'N/A')
                                     LuxuryBadge(
@@ -739,7 +751,7 @@ class _LateCheckoutTabState extends ConsumerState<LateCheckoutTab> {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          'Paid: ₹$amount',
+                          '${passStyle.amountLabel}: ₹$amount',
                           style: AppTypography.monoSmall.copyWith(
                             color: AppColors.purple,
                             fontWeight: FontWeight.w700,
@@ -751,8 +763,12 @@ class _LateCheckoutTabState extends ConsumerState<LateCheckoutTab> {
                 },
               );
             },
-            loading: () => const SizedBox.shrink(),
-            error: (_, __) => const SizedBox.shrink(),
+            loading: () => const PanelLoading(label: 'Loading pass claims…'),
+            error: (e, _) => PanelError(
+              error: e,
+              what: 'pass claims',
+              onRetry: () => ref.invalidate(earlyLateAcceptsProvider),
+            ),
           ),
         ],
       ),

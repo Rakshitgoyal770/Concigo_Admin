@@ -1,3 +1,5 @@
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../services/supabase_service.dart';
 
 /// Domain Service for Guest Lookup, Profile, KYC Verification & Pre-check-in
@@ -198,7 +200,9 @@ class GuestService {
     String? rejectionReason,
   }) async {
     if (requestId.isNotEmpty) {
-      final normStatus = status.toLowerCase();
+      // checkin_request_status enum only allows pending / approved / denied
+      var normStatus = status.toLowerCase();
+      if (normStatus == 'rejected') normStatus = 'denied';
       try {
         final updateData = <String, dynamic>{
           'status': normStatus,
@@ -221,7 +225,9 @@ class GuestService {
             .from('checkin_requests')
             .update(updateData)
             .eq('id', requestId);
-      } catch (_) {}
+      } on PostgrestException catch (e) {
+        throw Exception('Failed to update KYC status: ${e.message}');
+      }
     }
   }
 }

@@ -15,6 +15,7 @@ import '../../../../data/providers/reception_providers.dart';
 import '../../../../services/supabase_service.dart';
 import 'activate_upcoming_stay_modal.dart';
 import 'create_upcoming_booking_dialog.dart';
+import '../../../../core/widgets/stay_times_row.dart';
 
 enum ArrivalDateFilter {
   all,
@@ -655,6 +656,8 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                                           style: AppTypography.bodySmall,
                                           overflow: TextOverflow.ellipsis,
                                         ),
+                                        const SizedBox(height: 4),
+                                        StayTimesRow(stay: stay, showCheckOut: false, showDay: true),
                                         AppSpacing.gapV12,
                                         LuxuryButton(
                                           text: 'Activate Check-In',
@@ -703,6 +706,8 @@ class _UpcomingArrivalsListState extends ConsumerState<UpcomingArrivalsList> {
                                               style: AppTypography.bodySmall,
                                               overflow: TextOverflow.ellipsis,
                                             ),
+                                            const SizedBox(height: 4),
+                                            StayTimesRow(stay: stay, showCheckOut: false, showDay: true),
                                           ],
                                         ),
                                       ),

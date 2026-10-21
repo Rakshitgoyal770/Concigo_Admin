@@ -53,19 +53,21 @@ class _FolioBillingSheetState extends ConsumerState<FolioBillingSheet> {
     });
 
     try {
-      await ref.read(billingServiceProvider).addSurcharge(
+      final result = await ref.read(billingServiceProvider).addSurcharge(
         stayId: stayId,
         chargeName: name,
         amount: amt,
       );
+      if (!mounted) return;
       ref.read(receptionRefreshSignalProvider.notifier).state++;
       _chargeNameController.clear();
       _chargeAmountController.clear();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(backgroundColor: AppColors.success, content: Text('Added ₹$amt charge for $name.')),
-        );
-      }
+      _showOutcome(
+        okText: 'Added ₹$amt charge for $name.',
+        pmsFailed: result.pmsFailed,
+        pmsError: result.pmsError,
+        what: 'charge',
+      );
     } catch (e) {
       if (mounted) setState(() => _errorMessage = 'Failed to add charge: $e');
     } finally {
@@ -81,6 +83,15 @@ class _FolioBillingSheetState extends ConsumerState<FolioBillingSheet> {
       setState(() => _errorMessage = 'Please enter a valid payment amount.');
       return;
     }
+    if (_paymentMode == 'ROOM_CHARGE') {
+      // "Room Bill" means the amount stays on the room account. Nothing has been
+      // paid, so there is nothing to record (recording it would zero the guest's
+      // balance in the PMS for money that was never received).
+      setState(() => _errorMessage =
+          'Room Bill keeps the charge on the guest\'s room account — no payment to record. '
+          'Choose Cash, Card or UPI once money is actually received.');
+      return;
+    }
 
     setState(() {
       _isProcessing = true;
@@ -88,18 +99,24 @@ class _FolioBillingSheetState extends ConsumerState<FolioBillingSheet> {
     });
 
     try {
-      await ref.read(billingServiceProvider).recordPayment(
+      final result = await ref.read(billingServiceProvider).recordPayment(
         stayId: stayId,
         amount: amt,
         paymentMode: _paymentMode,
       );
+      if (!mounted) return;
       ref.read(receptionRefreshSignalProvider.notifier).state++;
       _paymentAmountController.clear();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(backgroundColor: AppColors.success, content: Text('Recorded payment of ₹$amt via $_paymentMode.')),
-        );
-      }
+      final settled = result.billsSettled == 0
+          ? 'No bill was fully covered'
+          : '${result.billsSettled} bill${result.billsSettled == 1 ? '' : 's'} settled';
+      final due = result.stillDue > 0 ? ' · ₹${result.stillDue.toStringAsFixed(2)} still due' : '';
+      _showOutcome(
+        okText: 'Recorded ₹$amt via $_paymentMode. $settled$due.',
+        pmsFailed: result.pmsFailed,
+        pmsError: result.pmsError,
+        what: 'payment',
+      );
     } catch (e) {
       if (mounted) setState(() => _errorMessage = 'Failed to record payment: $e');
     } finally {
@@ -107,14 +124,41 @@ class _FolioBillingSheetState extends ConsumerState<FolioBillingSheet> {
     }
   }
 
+  /// Green when everything worked; amber when it was saved in Concigo but the
+  /// PMS did not accept it, so the desk knows to follow up.
+  void _showOutcome({
+    required String okText,
+    required bool pmsFailed,
+    required String? pmsError,
+    required String what,
+  }) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    if (!pmsFailed) {
+      messenger.showSnackBar(SnackBar(backgroundColor: AppColors.success, content: Text(okText)));
+      return;
+    }
+    messenger.showSnackBar(SnackBar(
+      backgroundColor: AppColors.attention,
+      duration: const Duration(seconds: 10),
+      showCloseIcon: true,
+      content: Text(
+        '$okText\nSaved in Concigo, but the $what was NOT posted to the PMS: '
+        '${(pmsError ?? 'unknown error').replaceAll(RegExp(r'\s+'), ' ')}. Tell the manager to re-post it.',
+      ),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     final stay = widget.stay;
     final guestName = (stay['guest_name'] ?? stay['user_name'] ?? 'Guest').toString();
     final roomNum = (stay['room_number'] ?? stay['room_no'] ?? 'N/A').toString();
-    final totalTariff = stay['total_amount'] ?? stay['tariff'] ?? 2500;
-    final paidAmount = stay['paid_amount'] ?? 0;
-    final outstanding = (totalTariff is num && paidAmount is num) ? (totalTariff - paidAmount).clamp(0, 999999) : 0;
+    final roomTariff = (stay['tariff'] is num ? (stay['tariff'] as num).toDouble() : double.tryParse(stay['tariff']?.toString() ?? '2500') ?? 2500.0);
+    final totalAmount = (stay['total_amount'] is num ? (stay['total_amount'] as num).toDouble() : roomTariff);
+    final paidAmount = (stay['paid_amount'] is num ? (stay['paid_amount'] as num).toDouble() : 0.0);
+    final outstanding = (totalAmount - paidAmount).clamp(0.0, 999999.0);
+    final bills = (stay['service_bills'] as List?) ?? [];
 
     return Dialog(
       shape: const RoundedRectangleBorder(borderRadius: AppSpacing.roundedLg),
@@ -187,29 +231,99 @@ class _FolioBillingSheetState extends ConsumerState<FolioBillingSheet> {
                   children: [
                     Column(
                       children: [
-                        Text('Total Tariff', style: AppTypography.bodySmall),
+                        Text('Room Tariff', style: AppTypography.bodySmall),
                         AppSpacing.gapV4,
-                        Text('₹$totalTariff', style: AppTypography.monoMetric.copyWith(fontSize: 18)),
+                        Text('₹${roomTariff.toStringAsFixed(0)}', style: AppTypography.monoMetric.copyWith(fontSize: 17)),
                       ],
                     ),
                     Column(
                       children: [
-                        Text('Paid to Date', style: AppTypography.bodySmall),
+                        Text('Total Charges', style: AppTypography.bodySmall),
                         AppSpacing.gapV4,
-                        Text('₹$paidAmount', style: AppTypography.monoMetric.copyWith(fontSize: 18, color: AppColors.success)),
+                        Text('₹${totalAmount.toStringAsFixed(0)}', style: AppTypography.monoMetric.copyWith(fontSize: 17)),
                       ],
                     ),
                     Column(
                       children: [
-                        Text('Outstanding Balance', style: AppTypography.bodySmall),
+                        Text('Paid', style: AppTypography.bodySmall),
                         AppSpacing.gapV4,
-                        Text('₹$outstanding', style: AppTypography.monoMetric.copyWith(fontSize: 18, color: outstanding > 0 ? AppColors.departure : AppColors.success)),
+                        Text('₹${paidAmount.toStringAsFixed(0)}', style: AppTypography.monoMetric.copyWith(fontSize: 17, color: AppColors.success)),
+                      ],
+                    ),
+                    Column(
+                      children: [
+                        Text('Balance Due', style: AppTypography.bodySmall),
+                        AppSpacing.gapV4,
+                        Text('₹${outstanding.toStringAsFixed(0)}', style: AppTypography.monoMetric.copyWith(fontSize: 17, color: outstanding > 0 ? AppColors.departure : AppColors.success)),
                       ],
                     ),
                   ],
                 ),
               ),
               AppSpacing.gapV24,
+
+              // Itemized Folio Charges Section
+              if (bills.isNotEmpty) ...[
+                Text('Itemized Folio Charges (${bills.length})', style: AppTypography.labelLarge),
+                AppSpacing.gapV8,
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: AppSpacing.roundedMd,
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: bills.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.borderSubtle),
+                    itemBuilder: (context, i) {
+                      final b = bills[i] as Map;
+                      final amt = (b['amt'] as num?)?.toDouble() ?? 0.0;
+                      final cat = (b['charge_category'] ?? 'Incidentals').toString();
+                      final desc = (b['description'] ?? cat).toString();
+                      final isPaid = (b['payment_status'] ?? '').toString().toLowerCase() == 'paid';
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: cat == 'Accommodation' ? AppColors.primaryLight : AppColors.surfaceSubtle,
+                                borderRadius: AppSpacing.roundedSm,
+                              ),
+                              child: Text(cat, style: AppTypography.caption.copyWith(fontSize: 11, fontWeight: FontWeight.w600)),
+                            ),
+                            AppSpacing.gapH12,
+                            Expanded(
+                              child: Text(desc, style: AppTypography.bodySmall, overflow: TextOverflow.ellipsis),
+                            ),
+                            Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: isPaid ? AppColors.successLight : AppColors.departureLight,
+                                borderRadius: AppSpacing.roundedSm,
+                              ),
+                              child: Text(
+                                isPaid ? 'PAID' : 'UNPAID',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: isPaid ? AppColors.success : AppColors.departure,
+                                ),
+                              ),
+                            ),
+                            Text('₹${amt.toStringAsFixed(2)}', style: AppTypography.monoMetric.copyWith(fontSize: 14)),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                AppSpacing.gapV24,
+              ],
 
               // Add Surcharge Section
               Text('Add Incidentals / Surcharge', style: AppTypography.labelLarge),
@@ -256,7 +370,7 @@ class _FolioBillingSheetState extends ConsumerState<FolioBillingSheet> {
                         DropdownMenuItem(value: 'CASH', child: Text('Cash')),
                         DropdownMenuItem(value: 'CARD', child: Text('Credit / Debit Card')),
                         DropdownMenuItem(value: 'UPI', child: Text('UPI / QR')),
-                        DropdownMenuItem(value: 'ROOM_CHARGE', child: Text('Room Bill')),
+                        DropdownMenuItem(value: 'ROOM_CHARGE', child: Text('Room Bill (no payment)')),
                       ],
                       onChanged: (v) => setState(() => _paymentMode = v ?? 'CASH'),
                     ),

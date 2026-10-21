@@ -8,6 +8,7 @@ import '../../../../core/widgets/luxury_button.dart';
 import '../../../../core/widgets/luxury_text_field.dart';
 import '../../../../data/providers/supabase_providers.dart';
 import '../../../../data/providers/reception_providers.dart';
+import '../../../../services/supabase_service.dart';
 
 class InstantWalkInDialog extends ConsumerStatefulWidget {
   final Map<String, dynamic>? initialRoom;
@@ -154,16 +155,35 @@ class _InstantWalkInDialogState extends ConsumerState<InstantWalkInDialog> {
       );
 
       // 3. Activate stay and mark each room occupied
+      // (createStay already inserted the stay_rooms rows)
       for (final rid in roomIds) {
         await stayService.activateStay(
           stayId: stayId,
           roomId: rid,
-          assignRoom: true,
         );
         await roomService.updateRoomStatus(rid, 'occupied');
       }
 
-      // 4. Invalidate Reception Providers
+      // 4. Record Accommodation bill in service_bills for the selected tariff
+      final tariffAmt = double.tryParse(_tariffController.text.trim()) ?? 2500.0;
+      final roomNumsJoined = roomNumbers.join(', ');
+      try {
+        final userId = await SupabaseService.instance.getOrCreateUser(phone);
+        await SupabaseService.instance.client.from('service_bills').insert({
+          'stay_id': stayId,
+          'property_id': propId,
+          'user_id': userId,
+          'room_no': roomNumsJoined,
+          'amt': tariffAmt,
+          'charge_category': 'Accommodation',
+          'description': 'Room Tariff (${_checkInDate.toIso8601String().substring(0, 10)} - ${_checkOutDate.toIso8601String().substring(0, 10)})',
+          'payment_status': 'unpaid',
+        });
+      } catch (e) {
+        debugPrint('[WalkIn] Could not insert tariff bill: $e');
+      }
+
+      // 5. Invalidate Reception Providers
       ref.read(receptionRefreshSignalProvider.notifier).state++;
 
       if (mounted) {

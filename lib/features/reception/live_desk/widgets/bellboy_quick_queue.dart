@@ -7,6 +7,7 @@ import '../../../../core/widgets/luxury_badge.dart';
 import '../../../../core/widgets/luxury_button.dart';
 import '../../../../data/providers/reception_providers.dart';
 import '../../../../data/providers/supabase_providers.dart';
+import '../../../../core/widgets/async_states.dart';
 
 class BellboyQuickQueue extends ConsumerWidget {
   const BellboyQuickQueue({super.key});
@@ -197,8 +198,8 @@ class BellboyQuickQueue extends ConsumerWidget {
                     },
                   );
                 },
-                loading: () => const SizedBox.shrink(),
-                error: (_, __) => const SizedBox.shrink(),
+                loading: () => const PanelLoading(label: 'Loading luggage requests…'),
+                error: (e, _) => PanelError(error: e, what: 'luggage requests', onRetry: () => ref.invalidate(bellboyQueueProvider)),
               ),
             ],
           ),

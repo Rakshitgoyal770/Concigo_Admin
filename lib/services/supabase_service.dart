@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'function_region.dart';
 
 
 /// Session data for the currently logged-in employee
@@ -208,53 +210,35 @@ class SupabaseService {
   // OTP
   // ─────────────────────────────────────────────────────────────────────────
 
-  bool _isDevPhone(String normalized) {
-    return normalized == '+919999999999' ||
-        normalized == '+918888888888' ||
-        normalized == '+919876543210' ||
-        normalized == '+918950462002';
-  }
+  // Staff must end up with a real Supabase Auth session. The edge-function OTP
+  // fallback and the hardcoded developer numbers produced none, so the app ran
+  // as anon. For test logins use Supabase Auth "test phone numbers"
+  // (Dashboard → Authentication → Providers → Phone).
 
   Future<void> sendOtp(String phone) async {
     // Normalize phone number to E.164
     String normalised = phone.trim().replaceAll(RegExp(r'[\s\-\(\)]'), '');
     if (!normalised.startsWith('+')) {
-      normalised = '+$normalised';
+      // A bare 10-digit number is an Indian mobile number: add the country code so
+      // one person is never stored under two formats.
+      normalised = RegExp(r'^\d{10}$').hasMatch(normalised) ? '+91$normalised' : '+$normalised';
     }
 
-    // Developer / bypass numbers: skip SMS to eliminate 100% of MSG91 costs
-    if (_isDevPhone(normalised)) return;
-
     try {
-      // Use Supabase Auth OTP -> triggers MSG91 Send SMS Hook
+      // Supabase Auth OTP -> triggers the MSG91 Send SMS Hook
       await client.auth.signInWithOtp(phone: normalised);
-    } catch (e) {
-      // Fallback to send-otp-v2 function if auth fails
-      try {
-        final response = await client.functions.invoke(
-          'send-otp-v2',
-          body: {'phone': phone},
-        );
-        final data = response.data as Map<String, dynamic>?;
-        if (data == null || data['success'] != true) {
-          final errMsg = data?['error'] as String? ?? data?['message'] as String? ?? 'Failed to send OTP.';
-          throw Exception(errMsg);
-        }
-      } catch (fallbackErr) {
-        throw Exception('Failed to send OTP: ${e.toString().replaceFirst('Exception: ', '')}');
-      }
+    } on AuthException catch (e) {
+      throw Exception('Failed to send OTP: ${e.message}');
     }
   }
 
+  /// True only when Supabase Auth issued a session.
   Future<bool> verifyOtp(String phone, String otp) async {
     String normalised = phone.trim().replaceAll(RegExp(r'[\s\-\(\)]'), '');
     if (!normalised.startsWith('+')) {
-      normalised = '+$normalised';
-    }
-
-    if (_isDevPhone(normalised)) {
-      final code = otp.trim();
-      return code == '123456' || code == '000000' || code == '777777';
+      // A bare 10-digit number is an Indian mobile number: add the country code so
+      // one person is never stored under two formats.
+      normalised = RegExp(r'^\d{10}$').hasMatch(normalised) ? '+91$normalised' : '+$normalised';
     }
 
     try {
@@ -263,22 +247,8 @@ class SupabaseService {
         token: otp.trim(),
         type: OtpType.sms,
       );
-      if (res.session != null || res.user != null) {
-        return true;
-      }
-    } catch (_) {
-      // Try fallback to verify-otp edge function
-    }
-
-    try {
-      final response = await client.functions.invoke(
-        'verify-otp',
-        body: {'phone': phone, 'otp': otp},
-      );
-      final data = response.data as Map<String, dynamic>?;
-      if (data != null && data['success'] == true) return true;
-      return false;
-    } catch (e) {
+      return res.session != null;
+    } on AuthException {
       return false;
     }
   }
@@ -427,43 +397,52 @@ class SupabaseService {
     } catch (_) {}
   }
 
+  /// Restores the employee session from the signed-in Supabase user. The
+  /// stored JSON (which anyone can edit) only chooses WHICH of the user's
+  /// verified roles/properties to resume; role, property and department always
+  /// come from property_employees for the authenticated phone number.
   Future<EmployeeSession?> loadPersistedSession() async {
     try {
+      final authUser = client.auth.currentUser;
+      final authPhone = authUser?.phone;
+      if (client.auth.currentSession == null || authPhone == null || authPhone.isEmpty) {
+        await clearSession();
+        return null;
+      }
+
+      final roles = await verifyEmployeeRolesByPhone(authPhone);
+      if (roles.isEmpty) {
+        await clearSession();
+        return null;
+      }
+
+      EmployeeSession? saved;
       final prefs = await SharedPreferences.getInstance();
       final jsonStr = prefs.getString(_sessionStorageKey);
       if (jsonStr != null && jsonStr.isNotEmpty) {
-        final map = jsonDecode(jsonStr) as Map<String, dynamic>;
-        final session = EmployeeSession.fromJson(map);
-        // S3: Re-validate persisted session against DB to catch deactivated employees
-        final isValid = await _validateSession(session);
-        if (!isValid) {
-          await clearSession();
-          return null;
-        }
-        currentSession = session;
-        return currentSession;
+        try {
+          saved = EmployeeSession.fromJson(jsonDecode(jsonStr) as Map<String, dynamic>);
+        } catch (_) {}
       }
-    } catch (_) {}
-    return null;
-  }
 
-  /// S3: Re-validates a persisted session against the DB.
-  /// Returns false if the employee is no longer active or soft-deleted.
-  /// Fails open (returns true) on network errors to not block offline use.
-  Future<bool> _validateSession(EmployeeSession session) async {
-    if (session.empId.isEmpty) return false;
-    try {
-      final row = await client
-          .from('property_employees')
-          .select('emp_id')
-          .eq('emp_id', session.empId)
-          .eq('is_active', true)
-          .isFilter('deleted_at', null)
-          .maybeSingle();
-      return row != null;
+      final resumed = roles.firstWhere(
+        (r) =>
+            saved != null &&
+            r['emp_id'] == saved.empId &&
+            r['property_id'] == saved.propertyId &&
+            EmployeeSession.mapDbRoleToAppRole(r['role'] as String) == saved.role,
+        orElse: () => roles.first,
+      );
+
+      buildSession(
+        employee: resumed,
+        propertyName: (resumed['property_name'] as String?) ?? '',
+        allRoles: roles,
+      );
+      return currentSession;
     } catch (_) {
-      // Fail open — allow session if DB unreachable (offline / network error)
-      return true;
+      // Fail closed: without a verified session the dashboard must not open.
+      return null;
     }
   }
 
@@ -569,14 +548,99 @@ class SupabaseService {
       final response = await client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, raw_metadata, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), checkin_requests(remark), early_late_offer_accepts(type, time_selected)',
+            'stay_id, hotel_id, check_in_date, check_out_date, status, main_user_id, raw_metadata, users(name, mobile_no), stay_rooms(room_id, rooms(room_number, type, floor)), checkin_requests(remark), early_late_offer_accepts(type, time_selected, created_at, early_late_offer_payments(status)), service_bills(bill_id, amt, payment_status, charge_category, description, pms_charge_id, created_at)',
           )
           .eq('hotel_id', propertyId)
           .eq('status', 'Active')
           .isFilter('deleted_at', null)
           .order('check_in_date', ascending: false);
 
-      return List<Map<String, dynamic>>.from(response);
+      final enriched = <Map<String, dynamic>>[];
+      for (final rawStay in response) {
+        final map = Map<String, dynamic>.from(rawStay as Map);
+        final userMap = map['users'] as Map<String, dynamic>?;
+        final rawMeta = map['raw_metadata'] as Map<String, dynamic>?;
+        final bookingName = resolveBookingGuestName(rawMeta);
+        final bookingPhone = (rawMeta?['primaryGuest'] as Map<String, dynamic>?)?['phone'] as String?;
+        map['guest_name'] = bookingName ?? userMap?['name'] as String? ?? 'Guest';
+        map['phone_number'] = (bookingPhone != null && bookingPhone.isNotEmpty) ? bookingPhone : (userMap?['mobile_no'] as String? ?? '');
+        map['mobile_no'] = map['phone_number'];
+        map['pms_reservation_id'] = rawMeta?['id'] ?? map['stay_id'];
+
+        // Room extraction
+        final stayRooms = map['stay_rooms'] as List?;
+        if (stayRooms != null && stayRooms.isNotEmpty) {
+          final firstSr = stayRooms.first as Map?;
+          map['room_id'] = firstSr?['room_id'];
+          final roomNums = stayRooms
+              .map((sr) => (sr as Map)['rooms']?['room_number']?.toString())
+              .where((r) => r != null && r.isNotEmpty)
+              .toSet()
+              .join(', ');
+          if (roomNums.isNotEmpty) {
+            map['room_number'] = roomNums;
+            map['room_no'] = roomNums;
+          }
+          final roomTypes = stayRooms
+              .map((sr) => (sr as Map)['rooms']?['type']?.toString())
+              .where((t) => t != null && t.isNotEmpty)
+              .toSet()
+              .join(', ');
+          if (roomTypes.isNotEmpty) {
+            map['room_type'] = roomTypes;
+          }
+        }
+
+        // Calculate real tariff, total amount, paid amount, and outstanding from service_bills & PMS metadata
+        final rawBills = (map['service_bills'] as List?) ?? [];
+        final seenChargeIds = <String>{};
+        final uniqueBills = <Map<String, dynamic>>[];
+        for (final rawB in rawBills) {
+          final b = Map<String, dynamic>.from(rawB as Map);
+          final chargeId = b['pms_charge_id']?.toString();
+          if (chargeId != null && chargeId.isNotEmpty) {
+            if (seenChargeIds.contains(chargeId)) continue;
+            seenChargeIds.add(chargeId);
+          }
+          uniqueBills.add(b);
+        }
+        map['service_bills'] = uniqueBills;
+
+        double totalAmount = 0;
+        double roomTariff = 0;
+        double paidAmount = 0;
+
+        for (final b in uniqueBills) {
+          final amt = (b['amt'] as num?)?.toDouble() ?? 0;
+          totalAmount += amt;
+          if (b['charge_category'] == 'Accommodation') {
+            roomTariff += amt;
+          }
+          if (b['payment_status'] == 'paid') {
+            paidAmount += amt;
+          }
+        }
+
+        // Fallback to Apaleo totalGrossAmount if no accommodation bills exist
+        if (roomTariff == 0 && rawMeta != null) {
+          final gross = rawMeta['totalGrossAmount'];
+          if (gross is Map && gross['amount'] != null) {
+            final amt = (gross['amount'] as num).toDouble();
+            final curr = gross['currency']?.toString() ?? 'EUR';
+            final rate = curr == 'EUR' ? 90.0 : 1.0;
+            roomTariff = amt * rate;
+            totalAmount += roomTariff;
+          }
+        }
+
+        map['tariff'] = roomTariff > 0 ? roomTariff : 2500;
+        map['total_amount'] = totalAmount > 0 ? totalAmount : map['tariff'];
+        map['paid_amount'] = paidAmount;
+        map['outstanding'] = (map['total_amount'] - paidAmount).clamp(0, 999999);
+        enriched.add(map);
+      }
+
+      return enriched;
     } on PostgrestException catch (e) {
       throw Exception('Failed to fetch stays: ${e.message}');
     }
@@ -588,7 +652,7 @@ class SupabaseService {
       final response = await client
           .from('stay')
           .select(
-            'stay_id, check_in_date, check_out_date, status, main_user_id, raw_metadata, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), early_late_offer_accepts(type, time_selected)',
+            'stay_id, check_in_date, check_out_date, status, main_user_id, raw_metadata, users(name, mobile_no), stay_rooms(room_id, rooms(room_number)), early_late_offer_accepts(type, time_selected, created_at, early_late_offer_payments(status))',
           )
           .eq('hotel_id', propertyId)
           .isFilter('deleted_at', null)
@@ -1291,6 +1355,14 @@ class SupabaseService {
           allRoomIds.map((rid) => updateRoomBookingStatus(rid, false)),
         );
       }
+
+      // Trigger PMS Check-Out sync asynchronously
+      try {
+        unawaited(client.functions
+            .invoke('checkout-to-pms', queryParameters: kFunctionRegion, body: {'stay_id': stayId})
+            .then<void>((_) {})
+            .catchError((Object e) => debugPrint('[SupabaseService] checkout-to-pms notice: $e')));
+      } catch (_) {}
     } on PostgrestException catch (e) {
       throw Exception('Failed to checkout stay: ${e.message}');
     }
@@ -3439,6 +3511,31 @@ class SupabaseService {
   // EARLY / LATE OFFERS
   // ─────────────────────────────────────────────────────────────────────────
 
+  /// Standard check-in / check-out time of a hotel (hotel_property).
+  Future<Map<String, dynamic>?> fetchHotelTimes(String propertyId) async {
+    final row = await client
+        .from('hotel_property')
+        .select('checkin_time, checkout_time, timezone')
+        .eq('property_id', propertyId)
+        .maybeSingle();
+    return row == null ? null : Map<String, dynamic>.from(row);
+  }
+
+  /// Early / late passes of every Upcoming or Active stay of a hotel, with the
+  /// payment status needed to tell a confirmed pass from an abandoned claim.
+  /// One query for the whole property (not one per stay).
+  Future<List<Map<String, dynamic>>> fetchOpenStayPassRows(String propertyId) async {
+    final rows = await client
+        .from('early_late_offer_accepts')
+        .select(
+          'stay_id, type, time_selected, created_at, '
+          'early_late_offer_payments(status), stay!inner(hotel_id, status)',
+        )
+        .eq('stay.hotel_id', propertyId)
+        .inFilter('stay.status', ['Upcoming', 'Active']);
+    return (rows as List).map((r) => Map<String, dynamic>.from(r as Map)).toList();
+  }
+
   /// Fetch early_late_offers for a property filtered by type ('early_in' | 'late_out').
   /// Returns active offers ordered by created_at descending.
   Future<List<Map<String, dynamic>>> fetchEarlyLateOffers(
@@ -3447,23 +3544,30 @@ class SupabaseService {
     bool activeOnly = false,
   }) async {
     try {
-      var query = client
-          .from('early_late_offers')
-          .select(
-            'offer_id, property_id, offer_name, stay_id, min_time, max_time, '
-            'type, price_per_hour, status, "limit", created_at, updated_at',
-          )
-          .eq('property_id', propertyId)
-          .eq('type', type);
-
-      if (activeOnly) {
-        query = query.eq('status', 'active');
+      const cols =
+          'offer_id, property_id, offer_name, stay_id, min_time, max_time, '
+          'type, price_per_hour, status, "limit", created_at, updated_at';
+      Future<List> load(String select) {
+        var query = client
+            .from('early_late_offers')
+            .select(select)
+            .eq('property_id', propertyId)
+            .eq('type', type);
+        if (activeOnly) query = query.eq('status', 'active');
+        return query.order('created_at', ascending: false).then((r) => r as List);
       }
 
-      final response = await query.order('created_at', ascending: false);
+      List response;
+      try {
+        // limit_reset_at = start of the current counting cycle (migration 20261020130000)
+        response = await load('$cols, limit_reset_at');
+      } on PostgrestException catch (e) {
+        if (e.code != '42703') rethrow;
+        response = await load(cols);
+      }
 
       final List<Map<String, dynamic>> results = [];
-      for (final row in (response as List)) {
+      for (final row in response) {
         final map = Map<String, dynamic>.from(row as Map);
 
         // For late_out offers, resolve guest name and room number via stay_id
@@ -3684,84 +3788,111 @@ class SupabaseService {
     } catch (_) {}
   }
 
-  /// Fetch all early_late_offer_accepts for a property with joined data.
+  /// Payment state of a pass, from its payment rows:
+  ///   paid        – paid online ('success')
+  ///   room_bill   – booked to the room bill ('pending')
+  ///   held        – claimed within the last 15 min, payment still in progress
+  ///   failed      – the online attempt failed
+  ///   abandoned   – claimed, never paid or confirmed
+  /// Only paid / room_bill / held passes count against an offer's limit and
+  /// extend a stay.
+  static String passState(Map<String, dynamic> accept) {
+    final pays = (accept['early_late_offer_payments'] as List?) ?? const [];
+    final statuses = pays.map((p) => (p as Map)['status']?.toString()).toSet();
+    if (statuses.contains('success')) return 'paid';
+    if (statuses.contains('pending')) return 'room_bill';
+    final created = DateTime.tryParse(accept['created_at']?.toString() ?? '');
+    final fresh = created != null &&
+        DateTime.now().toUtc().difference(created.toUtc()) < const Duration(minutes: 15);
+    if (statuses.contains('failed')) return 'failed';
+    return fresh ? 'held' : 'abandoned';
+  }
+
+  static bool passCountsTowardLimit(String state) =>
+      state == 'paid' || state == 'room_bill' || state == 'held';
+
+  /// Fetch early_late_offer_accepts for a property, newest first, with the
+  /// guest, rooms, offer and payment state. Batched: 3 queries in total
+  /// (it used to run 3 queries per row).
   Future<List<Map<String, dynamic>>> fetchEarlyLateAccepts(
     String propertyId,
   ) async {
+    const base =
+        'accept_id, offer_id, user_id, stay_id, type, time_selected, amount_paid, created_at, '
+        'early_late_offer_payments(status), '
+        'early_late_offers!inner(offer_name, price_per_hour, property_id)';
     try {
-      final response = await client
-          .from('early_late_offer_accepts')
-          .select(
-            'accept_id, offer_id, user_id, stay_id, type, time_selected, '
-            'amount_paid, created_at',
-          )
-          .order('created_at', ascending: false);
+      List rows;
+      try {
+        rows = await client
+            .from('early_late_offer_accepts')
+            .select('$base, room_count')
+            .eq('early_late_offers.property_id', propertyId)
+            .order('created_at', ascending: false)
+            .limit(500) as List;
+      } on PostgrestException catch (e) {
+        if (e.code != '42703') rethrow; // room_count column not migrated yet
+        rows = await client
+            .from('early_late_offer_accepts')
+            .select(base)
+            .eq('early_late_offers.property_id', propertyId)
+            .order('created_at', ascending: false)
+            .limit(500) as List;
+      }
 
-      final List<Map<String, dynamic>> results = [];
-      for (final row in (response as List)) {
-        final map = Map<String, dynamic>.from(row as Map);
+      final results = rows
+          .map((r) => Map<String, dynamic>.from(r as Map))
+          .toList();
 
-        // Resolve user info
-        final userId = map['user_id'] as String?;
-        if (userId != null) {
-          try {
-            final userResp = await client
-                .from('users')
-                .select('name, mobile_no')
-                .eq('user_id', userId)
-                .maybeSingle();
-            if (userResp != null) {
-              map['guest_name'] = userResp['name'] as String? ?? '—';
-              map['mobile_no'] = userResp['mobile_no'] as String? ?? '—';
-            }
-          } catch (_) {}
+      final userIds = results.map((r) => r['user_id']).whereType<String>().toSet().toList();
+      final stayIds = results.map((r) => r['stay_id']).whereType<String>().toSet().toList();
+
+      final usersById = <String, Map<String, dynamic>>{};
+      if (userIds.isNotEmpty) {
+        final users = await client
+            .from('users')
+            .select('user_id, name, mobile_no')
+            .inFilter('user_id', userIds);
+        for (final u in (users as List)) {
+          usersById[(u as Map)['user_id'].toString()] = Map<String, dynamic>.from(u);
         }
+      }
 
-        // Resolve offer info
-        final offerId = map['offer_id'] as String?;
-        if (offerId != null) {
-          try {
-            final offerResp = await client
-                .from('early_late_offers')
-                .select('offer_name, type, price_per_hour, property_id')
-                .eq('offer_id', offerId)
-                .maybeSingle();
-            if (offerResp != null) {
-              // Filter by property
-              if (offerResp['property_id'] != propertyId) continue;
-              map['offer_name'] = offerResp['offer_name'] as String? ?? '—';
-              map['price_per_hour'] = offerResp['price_per_hour'];
-            }
-          } catch (_) {}
+      final roomsByStay = <String, List<String>>{};
+      if (stayIds.isNotEmpty) {
+        final links = await client
+            .from('stay_rooms')
+            .select('stay_id, rooms(room_number)')
+            .inFilter('stay_id', stayIds);
+        for (final l in (links as List)) {
+          final m = l as Map;
+          final num = (m['rooms'] as Map?)?['room_number']?.toString();
+          if (num == null || num.isEmpty) continue;
+          final list = roomsByStay.putIfAbsent(m['stay_id'].toString(), () => []);
+          if (!list.contains(num)) list.add(num);
         }
+      }
 
-        // Resolve room numbers via stay_id
-        final stayId = map['stay_id'] as String?;
-        if (stayId != null) {
-          try {
-            final srResp = await client
-                .from('stay_rooms')
-                .select('rooms(room_number)')
-                .eq('stay_id', stayId);
-            if ((srResp as List).isNotEmpty) {
-              final roomNums = <String>[];
-              for (final sr in srResp) {
-                final roomMap = (sr as Map)['rooms'] as Map<String, dynamic>?;
-                final rNum = roomMap?['room_number']?.toString();
-                if (rNum != null && rNum.isNotEmpty) {
-                  roomNums.add(rNum);
-                }
-              }
-              if (roomNums.isNotEmpty) {
-                map['room_number'] = roomNums.join(', ');
-                map['room_numbers'] = roomNums.join(', ');
-                map['room_count'] = map['room_count'] ?? roomNums.length;
-              }
-            }
-          } catch (_) {}
+      for (final map in results) {
+        final user = usersById[map['user_id']?.toString()];
+        map['guest_name'] = user?['name'] as String? ?? '—';
+        map['mobile_no'] = user?['mobile_no'] as String? ?? '—';
+
+        final offer = map['early_late_offers'] as Map?;
+        map['offer_name'] = offer?['offer_name'] as String? ?? '—';
+        map['price_per_hour'] = offer?['price_per_hour'];
+
+        final rooms = roomsByStay[map['stay_id']?.toString()] ?? const <String>[];
+        if (rooms.isNotEmpty) {
+          map['room_number'] = rooms.join(', ');
+          map['room_numbers'] = rooms.join(', ');
         }
+        map['room_count'] = (map['room_count'] as num?)?.toInt() ??
+            (rooms.isNotEmpty ? rooms.length : 1);
 
-        results.add(map);
+        final state = passState(map);
+        map['pass_state'] = state;
+        map['counts_toward_limit'] = passCountsTowardLimit(state);
       }
       return results;
     } on PostgrestException catch (e) {
@@ -3955,7 +4086,7 @@ class SupabaseService {
   }) {
     try {
       client.functions.invoke(
-        'push-charges-to-pms',
+        'push-charges-to-pms', queryParameters: kFunctionRegion,
         body: {
           'source_type': sourceType,
           'source_id': sourceId,
